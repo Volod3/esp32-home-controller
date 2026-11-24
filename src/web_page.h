@@ -315,12 +315,31 @@ function chart(o){const W=360,H=190,L=30,R=8,T=18,B=30;const v=o.t.filter(x=>x!=
  $('chart').innerHTML=`<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8b5bff" stop-opacity=".55"/><stop offset="1" stop-color="#5b9cff" stop-opacity="0"/></linearGradient><linearGradient id="gl" x1="0" x2="1"><stop offset="0" stop-color="#5b9cff"/><stop offset="1" stop-color="#c084fc"/></linearGradient></defs>${grid}${bars}<path d="${area}" fill="url(#g)"/><path d="${path}" fill="none" stroke="url(#gl)" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>${dots}${lab}${xs}`}
 function openHash(){const b=document.querySelector('nav button[data-t="'+location.hash.slice(1)+'"]');if(b)b.click()}openHash();// ---- трансляція екрана ----
 const cv=$('scr'),cx=cv.getContext('2d'),img=cx.createImageData(128,64);let scrBusy=false,frames=0,fT=Date.now();
-async function scrLoop(){if(document.hidden||!$('t-home').classList.contains('act')){setTimeout(scrLoop,400);return}
- try{const r=await fetch('/api/screen',{cache:'no-store'});const b=new Uint8Array(await r.arrayBuffer());if(b.length==1024){const d=img.data;
-  for(let p=0;p<8;p++)for(let x=0;x<128;x++){const v=b[p*128+x];for(let k=0;k<8;k++){const i=((p*8+k)*128+x)*4,on=v>>k&1;d[i]=on?190:4;d[i+1]=on?228:8;d[i+2]=on?255:14;d[i+3]=255}}
-  cx.putImageData(img,0,0);frames++}}catch(e){await new Promise(r=>setTimeout(r,800))}
- if(Date.now()-fT>2000){$('dispInfo').textContent=(S?'екран '+Math.round(S.disp.fps)+' к/с · ':'')+'трансляція '+Math.round(frames*1000/(Date.now()-fT))+' к/с';frames=0;fT=Date.now()}
- setTimeout(scrLoop,40)}
+function drawFrame(b,o){const d=img.data;
+ for(let p=0;p<8;p++)for(let x=0;x<128;x++){const v=b[o+p*128+x];for(let k=0;k<8;k++){const i=((p*8+k)*128+x)*4,on=v>>k&1;d[i]=on?190:4;d[i+1]=on?228:8;d[i+2]=on?255:14;d[i+3]=255}}
+ cx.putImageData(img,0,0);frames++}
+const homeOn=()=>!document.hidden&&$('t-home').classList.contains('act');
+const sleepMs=ms=>new Promise(r=>setTimeout(r,ms));
+function fpsInfo(){if(Date.now()-fT>2000){$('dispInfo').textContent=(S?'екран '+Math.round(S.disp.fps)+' к/с · ':'')+'трансляція '+Math.round(frames*1000/(Date.now()-fT))+' к/с';frames=0;fT=Date.now()}}
+// Потік: одне з'єднання, плата сама шле кадри по 1024 байти (~30 к/с). Якщо браузер не вміє потоки — опитування.
+async function scrLoop(){
+ for(;;){
+  if(!homeOn()){await sleepMs(400);continue}
+  const ac=new AbortController();
+  try{const r=await fetch('/api/stream',{signal:ac.signal,cache:'no-store'});
+   if(!r.body||!r.body.getReader){await pollFrames();continue}
+   const rd=r.body.getReader();let buf=new Uint8Array(4096),len=0;
+   for(;;){if(!homeOn()){ac.abort();break}
+    const {value,done}=await rd.read();if(done)break;
+    if(len+value.length>buf.length){const nb=new Uint8Array(len+value.length+2048);nb.set(buf.subarray(0,len));buf=nb}
+    buf.set(value,len);len+=value.length;
+    if(len>=1024){const last=Math.floor(len/1024)*1024-1024;drawFrame(buf,last);buf.copyWithin(0,last+1024,len);len-=last+1024}
+    fpsInfo()}
+  }catch(e){}
+  await sleepMs(600)}}
+async function pollFrames(){while(homeOn()){const t0=performance.now();
+ try{const r=await fetch('/api/screen',{cache:'no-store'});const b=new Uint8Array(await r.arrayBuffer());if(b.length==1024)drawFrame(b,0)}catch(e){await sleepMs(800)}
+ fpsInfo();await sleepMs(Math.max(0,33-(performance.now()-t0)))}}
 async function key(k){await api('/api/key?k='+k)}
 let wheelT=0;$('oledBox').addEventListener('wheel',e=>{e.preventDefault();const n=Date.now();if(n-wheelT<60)return;wheelT=n;key(e.deltaY>0?'right':'left')},{passive:false});
 document.addEventListener('keydown',e=>{if(!$('t-home').classList.contains('act')||document.activeElement.tagName=='INPUT'||document.activeElement.tagName=='SELECT')return;

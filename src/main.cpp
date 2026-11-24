@@ -48,6 +48,7 @@
 #include <ESPmDNS.h>
 #include <stdarg.h>
 #include "web_page.h"
+#include <lwip/sockets.h>
 
 // =====================================================================
 //  1. НАЛАШТУВАННЯ
@@ -152,8 +153,8 @@
 
 #define DEFAULT_SLEEP_SEC      15
 #define TRANS_MS               340      // тривалість анімації переходу між екранами
-#define OLED_I2C_HZ            1000000  // шина під час передачі кадру (60 к/с). Якщо екран "сміттить" — 800000 або 400000
-#define FRAME_MS               16       // період кадрів, ~60 к/с (16.7 мс; 16 — з запасом)
+#define OLED_I2C_HZ            800000   // шина під час передачі кадру (для 60 к/с — 1000000). Якщо екран "сміттить" — 400000
+#define FRAME_MS               25       // період кадрів: 25 мс = 40 к/с (16 = ~60 к/с)
 #define DEBUG_LINK             DEBUG_MODE
 
 // Сторожовий таймер: якщо loop() завис довше WDT_TIMEOUT_S — плата сама перезавантажиться
@@ -311,6 +312,8 @@ static uint32_t netApplyAt = 0;            // відкладене перепі�
 static volatile bool wxForce = false, wxBusy = false;
 static uint8_t  scrShot[1024];             // останній кадр екрана (трансляція у веб-меню)
 static float    frameSendUs = 0, frameFps = 0;
+static uint32_t webMaxUs = 0, webSumUs = 0, drawSumUs = 0;
+static uint32_t dbgWebMs = 0, dbgWebMax = 0, dbgDrawMs = 0;   // діагностика: час веб-сервера і малювання за секунду
 static uint8_t  oledLast[1024];            // що вже є на екрані (передаємо лише зміни)
 static bool     oledCacheOk = false;
 
@@ -1277,6 +1280,7 @@ static void commitEdit() {
 
 static void menuReset();
 static void toast(const char* m);
+static void streamStop();
 static void menuEncoder(int dir);
 static void menuOk();
 static void menuBack();
@@ -3116,6 +3120,7 @@ static void enterDeep() {
   if (oledOk) { oled.clearBuffer(); oled.sendBuffer(); oled.setPowerSave(1); }
   memset(scrShot, 0, sizeof(scrShot));
   oledCacheOk = false;
+  streamStop();
   WiFi.softAPdisconnect(true);
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
@@ -3294,7 +3299,8 @@ static void webState() {
   jf(s, "\",\"rssi\":%d,\"ip\":\"%s\",\"host\":\"%s\",\"ap\":%s,\"apSsid\":\"%s\",\"apPass\":\"%s\",\"apIp\":\"%s\",\"apClients\":%d},",
      c ? (int)WiFi.RSSI() : 0, c ? WiFi.localIP().toString().c_str() : "", OTA_HOST, apOn ? "true" : "false",
      AP_SSID, AP_PASS, WiFi.softAPIP().toString().c_str(), apActive() ? (int)WiFi.softAPgetStationNum() : 0);
-  jf(s, "\"disp\":{\"asleep\":%s,\"fps\":%.0f,\"sendMs\":%.1f},", asleep ? "true" : "false", frameFps, frameSendUs / 1000.0f);
+  jf(s, "\"disp\":{\"asleep\":%s,\"fps\":%.0f,\"sendMs\":%.1f,\"webMs\":%lu,\"webMax\":%lu,\"drawMs\":%lu},",
+     asleep ? "true" : "false", frameFps, frameSendUs / 1000.0f, (unsigned long)dbgWebMs, (unsigned long)dbgWebMax, (unsigned long)dbgDrawMs);
   jf(s, "\"sys\":{\"up\":%lu,\"heap\":%u,\"ppm\":%.1f,\"ntp\":%s,\"pro\":\"%s\",\"proOk\":%s,\"ina\":%s,\"allOff\":%s,\"fw\":\"%s %s\"}",
      (unsigned long)(millis() / 1000), (unsigned)(ESP.getFreeHeap() / 1024), (float)driftPpm, ntpMono ? "true" : "false",
      proVer, (millis() - lastRxMs < 15000) ? "true" : "false", inaAddr ? "true" : "false", allOff ? "true" : "false",
@@ -3481,6 +3487,46 @@ static void webScreen() {
   web.send_P(200, "application/octet-stream", (const char*)scrShot, sizeof(scrShot));
 }
 
+// Потік кадрів: одне постійне з'єднання, плата сама дописує кадр ~30 разів на секунду.
+// Раніше кожен кадр був окремим HTTP-запитом (~20 мс блокування циклу) і екран просідав.
+// Пишемо неблокуюче (MSG_DONTWAIT): завислий браузер не зупиняє loop().
+static WiFiClient streamCl;
+static bool       streamOn = false;
+static uint8_t    streamBuf[1024];
+static int        streamOff = 1024;
+static uint32_t   streamT = 0, streamProg = 0;
+#define STREAM_MS 31
+
+static void streamStop() { if (streamOn) streamCl.stop(); streamOn = false; streamOff = 1024; }
+
+static void webStream() {
+  streamStop();                                       // один глядач за раз — новий замінює старого
+  WiFiClient c = web.client();
+  c.setNoDelay(true);
+  c.print("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-store\r\n"
+          "Access-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n");
+  streamCl = c;                                       // копія тримає сокет відкритим після обробника
+  streamOn = true;
+  streamOff = 1024;
+  streamT = 0;
+  streamProg = millis();
+}
+
+static void streamTick() {
+  if (!streamOn) return;
+  uint32_t now = millis();
+  if (!streamCl.connected() || now - streamProg > 5000) { streamStop(); return; }   // закрили або завис
+  if (streamOff >= 1024) {
+    if (now - streamT < STREAM_MS) return;
+    streamT = now;
+    memcpy(streamBuf, scrShot, sizeof(streamBuf));
+    streamOff = 0;
+  }
+  int n = send(streamCl.fd(), streamBuf + streamOff, 1024 - streamOff, MSG_DONTWAIT);
+  if (n > 0) { streamOff += n; streamProg = now; }
+  else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) streamStop();
+}
+
 // Пульт з веб-меню: ті самі події, що й від Pro Micro
 static void webKey() {
   String k = web.arg("k");
@@ -3509,14 +3555,17 @@ static void initWeb() {
   web.on("/api/act", HTTP_GET, webAct);
   web.on("/api/scan", HTTP_GET, webScan);
   web.on("/api/screen", HTTP_GET, webScreen);
+  web.on("/api/stream", HTTP_GET, webStream);
   web.on("/api/key", HTTP_GET, webKey);
   web.on("/api/wifi", HTTP_POST, webWifi);
   web.onNotFound([]() { web.sendHeader("Location", "/"); web.send(302, "text/plain", ""); });
+  web.enableDelay(false);                             // без паузи 1 мс на кожному проході loop()
   web.begin();
 }
 
 static void webTick() {
   web.handleClient();
+  streamTick();
   if (webRestartAt && (int32_t)(millis() - webRestartAt) >= 0) { saveSettings(); delay(50); ESP.restart(); }
   if (webDeepAt && (int32_t)(millis() - webDeepAt) >= 0) { webDeepAt = 0; enterDeep(); }
 }
@@ -3733,7 +3782,13 @@ void loop() {
   netWatch();
 
   readLink();
-  if (!deepOff) webTick();
+  if (!deepOff) {
+    uint32_t w0 = micros();
+    webTick();
+    uint32_t wd = micros() - w0;
+    if (wd > webMaxUs) webMaxUs = wd;
+    webSumUs += wd;
+  }
   menuTick();
   if (deepOff && okHeld && millis() - okDownT >= DEEP_WAKE_HOLD_MS) exitDeep();
 
@@ -3796,16 +3851,22 @@ void loop() {
       dirty = false;
       stepAnim();
       animMoving = false;
+      uint32_t d0 = micros();
       oled.clearBuffer();
       if (asleep) drawSaver(); else drawUi();
       uint32_t t0 = micros();
       oledFlush();
       frameSendUs = frameSendUs * 0.9f + (micros() - t0) * 0.1f;
+      drawSumUs += micros() - d0;
       memcpy(scrShot, oled.getBufferPtr(), sizeof(scrShot));   // для трансляції у веб-меню
       static uint32_t fpsT = 0;
       static uint16_t fpsN = 0;
       fpsN++;
-      if (now - fpsT >= 1000) { frameFps = fpsN * 1000.0f / (now - fpsT); fpsN = 0; fpsT = now; }
+      if (now - fpsT >= 1000) {
+        frameFps = fpsN * 1000.0f / (now - fpsT); fpsN = 0; fpsT = now;
+        dbgWebMs = webSumUs / 1000; dbgWebMax = webMaxUs / 1000; dbgDrawMs = drawSumUs / 1000;
+        webSumUs = webMaxUs = drawSumUs = 0;
+      }
     }
   }
 
