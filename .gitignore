@@ -1,0 +1,8 @@
+.pio
+.vscode/
+promicro/.pio
+promicro/.vscode/
+
+# особисті дані: паролі Wi-Fi/OTA, координати
+include/secrets.h
+secrets.ini
