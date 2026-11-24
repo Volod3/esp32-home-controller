@@ -151,7 +151,9 @@
 #define NUM_RELAYS             3
 
 #define DEFAULT_SLEEP_SEC      15
-#define TRANS_MS               240      // тривалість анімації переходу між екранами
+#define TRANS_MS               340      // тривалість анімації переходу між екранами
+#define OLED_I2C_HZ            1000000  // шина під час передачі кадру (60 к/с). Якщо екран "сміттить" — 800000 або 400000
+#define FRAME_MS               16       // період кадрів, ~60 к/с (16.7 мс; 16 — з запасом)
 #define DEBUG_LINK             DEBUG_MODE
 
 // Сторожовий таймер: якщо loop() завис довше WDT_TIMEOUT_S — плата сама перезавантажиться
@@ -307,6 +309,10 @@ static char     netSsid[33] = WIFI_SSID;   // мережа, до якої під
 static char     netPass[65] = WIFI_PASS;
 static uint32_t netApplyAt = 0;            // відкладене перепідключення після зміни мережі
 static volatile bool wxForce = false, wxBusy = false;
+static uint8_t  scrShot[1024];             // останній кадр екрана (трансляція у веб-меню)
+static float    frameSendUs = 0, frameFps = 0;
+static uint8_t  oledLast[1024];            // що вже є на екрані (передаємо лише зміни)
+static bool     oledCacheOk = false;
 
 // Плавні значення для малювання
 static float frameDt  = 0.016f;
@@ -794,6 +800,7 @@ static uint32_t adcMv(uint8_t pin) {
 #define INA_STUCK_READS      600        // стільки однакових відліків поспіль = "завис" (~5 хв; стабільна АКБ може довго давати те саме)
 
 static bool inaRead(uint8_t reg, uint16_t& out) {
+  Wire.setClock(400000);                                    // INA3221 — до 400 кГц (екран ставить свою частоту сам)
   Wire.beginTransmission(inaAddr);
   Wire.write(reg);
   if (Wire.endTransmission(true) != 0) return false;       // зі STOP, без repeated start
@@ -805,6 +812,7 @@ static bool inaRead(uint8_t reg, uint16_t& out) {
 }
 
 static bool inaWrite(uint8_t reg, uint16_t val) {
+  Wire.setClock(400000);
   Wire.beginTransmission(inaAddr);
   Wire.write(reg);
   Wire.write((uint8_t)(val >> 8));
@@ -1777,29 +1785,61 @@ static void drawPage(int p, int ox) {
   }
 }
 
+// Перехід між екранами: обидва екрани малюються в окремі буфери й складаються попіксельно.
+// Новий "картка" в'їжджає з пружинним дотягуванням (ease-out-back), старий відступає повільніше
+// (паралакс) і розчиняється растром Байєра; між ними — тонкий край картки.
+static uint8_t trA[1024], trB[1024];
+
+static float easeOutBack(float t) {
+  const float c1 = 1.25f, c3 = c1 + 1.0f;
+  t = constrain(t, 0.0f, 1.0f) - 1.0f;
+  return 1.0f + c3 * t * t * t + c1 * t * t;
+}
+
 static void drawPages() {
   if (transT >= 1.0f) { drawPage(page, 0); return; }
 
   // Анімація прив'язана до часу, а не до кількості кадрів — однакова швидкість завжди
   transT = min(1.0f, (float)(millis() - transStart) / (float)TRANS_MS);
-  float inv = 1.0f - transT;
-  float e = 1.0f - inv * inv * inv;                // ease-out cubic
+  if (transT >= 1.0f) { drawPage(page, 0); return; }
+  float ein = easeOutBack(transT);                  // новий екран (з перельотом ~6%)
+  float eo  = easeOut(min(1.0f, transT * 1.25f));   // старий: відступ і розчинення
+  int sg = transDir > 0 ? 1 : -1;
 
-  if (transDir > 0) {                       // новий екран виїжджає справа
-    drawPage(fromPage, 0);
-    int off = (int)(128 * (1.0f - e));
-    oled.setDrawColor(0);
-    oled.drawBox(off, 0, 128 - off, 64);
-    oled.setDrawColor(1);
-    drawPage(page, off);
-  } else {                                  // старий екран від'їжджає вправо
-    drawPage(page, 0);
-    int off = (int)(128 * e);
-    if (off < 128) {
-      oled.setDrawColor(0);
-      oled.drawBox(off, 0, 128 - off, 64);
-      oled.setDrawColor(1);
-      drawPage(fromPage, off);
+  uint8_t* buf = oled.getBufferPtr();
+  drawPage(fromPage, 0);
+  memcpy(trA, buf, 1024);
+  oled.clearBuffer();
+  drawPage(page, 0);
+  memcpy(trB, buf, 1024);
+
+  int xin  = (int)lroundf(sg * 128.0f * (1.0f - ein));   // зсув нового екрана
+  int xout = (int)lroundf(-sg * 44.0f * eo);             // зсув старого (повільніше)
+  // маска розчинення: Байєр 4x4, поріг 0..16
+  static const uint8_t BAYER[4][4] = {{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}};
+  int thr = (int)(eo * 16.0f + 0.5f);
+  uint8_t mask[4];
+  for (int xm = 0; xm < 4; xm++) {
+    uint8_t m = 0;
+    for (int b = 0; b < 8; b++) if (BAYER[b & 3][xm] >= thr) m |= 1 << b;
+    mask[xm] = m;
+  }
+  int edge = sg > 0 ? xin - 1 : xin + 128;               // край картки нового екрана
+  for (int pg = 0; pg < 8; pg++) {
+    const uint8_t* A = trA + pg * 128;
+    const uint8_t* B = trB + pg * 128;
+    uint8_t* O = buf + pg * 128;
+    for (int x = 0; x < 128; x++) {
+      int bx = x - xin;
+      uint8_t v;
+      if (bx >= 0 && bx < 128) v = B[bx];
+      else {
+        int ax = x - xout;
+        v = (ax >= 0 && ax < 128) ? (A[ax] & mask[x & 3]) : 0;
+      }
+      if (x == edge) v = 0xFF;
+      else if (x == edge - sg) v = 0;                    // чорна щілина перед краєм — читається як "тінь"
+      O[x] = v;
     }
   }
 }
@@ -3074,6 +3114,8 @@ static void enterDeep() {
   applyRelays();
   ledSync();
   if (oledOk) { oled.clearBuffer(); oled.sendBuffer(); oled.setPowerSave(1); }
+  memset(scrShot, 0, sizeof(scrShot));
+  oledCacheOk = false;
   WiFi.softAPdisconnect(true);
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
@@ -3252,6 +3294,7 @@ static void webState() {
   jf(s, "\",\"rssi\":%d,\"ip\":\"%s\",\"host\":\"%s\",\"ap\":%s,\"apSsid\":\"%s\",\"apPass\":\"%s\",\"apIp\":\"%s\",\"apClients\":%d},",
      c ? (int)WiFi.RSSI() : 0, c ? WiFi.localIP().toString().c_str() : "", OTA_HOST, apOn ? "true" : "false",
      AP_SSID, AP_PASS, WiFi.softAPIP().toString().c_str(), apActive() ? (int)WiFi.softAPgetStationNum() : 0);
+  jf(s, "\"disp\":{\"asleep\":%s,\"fps\":%.0f,\"sendMs\":%.1f},", asleep ? "true" : "false", frameFps, frameSendUs / 1000.0f);
   jf(s, "\"sys\":{\"up\":%lu,\"heap\":%u,\"ppm\":%.1f,\"ntp\":%s,\"pro\":\"%s\",\"proOk\":%s,\"ina\":%s,\"allOff\":%s,\"fw\":\"%s %s\"}",
      (unsigned long)(millis() / 1000), (unsigned)(ESP.getFreeHeap() / 1024), (float)driftPpm, ntpMono ? "true" : "false",
      proVer, (millis() - lastRxMs < 15000) ? "true" : "false", inaAddr ? "true" : "false", allOff ? "true" : "false",
@@ -3432,6 +3475,29 @@ static void webWifi() {
   web.send(200, "application/json; charset=utf-8", o);
 }
 
+// Трансляція екрана: сирий кадр 1024 байти (8 смуг по 128 стовпців, біт 0 — верхній піксель)
+static void webScreen() {
+  web.sendHeader("Cache-Control", "no-store");
+  web.send_P(200, "application/octet-stream", (const char*)scrShot, sizeof(scrShot));
+}
+
+// Пульт з веб-меню: ті самі події, що й від Pro Micro
+static void webKey() {
+  String k = web.arg("k");
+  char line[24];
+  auto feed = [&](const char* l) { snprintf(line, sizeof(line), "%s", l); handleLine(line); };
+  if      (k == "left")  feed("ENC,-1");
+  else if (k == "right") feed("ENC,+1");
+  else if (k == "ok")    { feed("BTN,OK,1");   feed("BTN,OK,0"); }
+  else if (k == "back")  { feed("BTN,BACK,1"); feed("BTN,BACK,0"); }
+  else if (k == "conf")  { feed("BTN,CONF,1"); feed("BTN,CONF,0"); }
+  else if (k == "wake")  { if (!allOff) wake(); }
+  else if (k == "sleep") { if (!asleep) sleepNow(); }
+  else { web.send(400, "application/json", "{\"err\":\"key\"}"); return; }
+  dirty = true;
+  web.send(200, "application/json", "{\"ok\":true}");
+}
+
 static void initWeb() {
   web.on("/", HTTP_GET, []() {
     web.sendHeader("Cache-Control", "no-cache");
@@ -3442,6 +3508,8 @@ static void initWeb() {
   web.on("/api/set", HTTP_GET, webSet);
   web.on("/api/act", HTTP_GET, webAct);
   web.on("/api/scan", HTTP_GET, webScan);
+  web.on("/api/screen", HTTP_GET, webScreen);
+  web.on("/api/key", HTTP_GET, webKey);
   web.on("/api/wifi", HTTP_POST, webWifi);
   web.onNotFound([]() { web.sendHeader("Location", "/"); web.send(302, "text/plain", ""); });
   web.begin();
@@ -3487,7 +3555,7 @@ static void initOta() {
     oled.sendBuffer();
   });
 
-  ArduinoOTA.onError([](ota_error_t) { otaBusy = false; dirty = true; });
+  ArduinoOTA.onError([](ota_error_t) { otaBusy = false; dirty = true; oledCacheOk = false; });
 
   ArduinoOTA.begin();
 }
@@ -3496,11 +3564,43 @@ static void initOta() {
 //  10b. OLED: старт і самовідновлення
 // =====================================================================
 
+// Власна передача кадру: U8g2 ріже кадр на десятки дрібних I2C-транзакцій (~20 мс на кадр).
+// Тут — по одній транзакції на смугу (128 байт), і лише смуги/стовпці, що змінились з минулого кадру.
+static void oledFlush() {
+  uint8_t* b = oled.getBufferPtr();
+  Wire.setClock(OLED_I2C_HZ);
+  for (int pg = 0; pg < 8; pg++) {
+    const uint8_t* src = b + pg * 128;
+    uint8_t* old = oledLast + pg * 128;
+    int x0 = 0, x1 = 127;
+    if (oledCacheOk) {
+      while (x0 < 128 && src[x0] == old[x0]) x0++;
+      if (x0 == 128) continue;                                  // смуга не змінилась
+      while (x1 > x0 && src[x1] == old[x1]) x1--;
+    }
+    int col = x0 + 2;                                           // SH1106: 132 стовпці, видимі з 2-го
+    Wire.beginTransmission(0x3C);
+    Wire.write(0x00);                                           // далі — команди
+    Wire.write(0xB0 | pg);
+    Wire.write(0x10 | (col >> 4));
+    Wire.write(col & 0x0F);
+    bool ok = Wire.endTransmission() == 0;
+    Wire.beginTransmission(0x3C);
+    Wire.write(0x40);                                           // далі — дані
+    Wire.write(src + x0, x1 - x0 + 1);
+    ok = (Wire.endTransmission() == 0) && ok;
+    if (ok) memcpy(old + x0, src + x0, x1 - x0 + 1);
+    else    { oledCacheOk = false; return; }                    // збій шини — наступного разу весь кадр
+  }
+  oledCacheOk = true;
+}
+
 static bool oledInit() {
   Wire.beginTransmission(0x3C);
   if (Wire.endTransmission() != 0) return false;
   oled.begin();
-  oled.setBusClock(400000);
+  oled.setBusClock(OLED_I2C_HZ);
+  oledCacheOk = false;
   oled.setFontMode(1);          // прозорий фон тексту (потрібно для XOR-малювання)
   Wire.setTimeOut(20);
   oledOk = true;
@@ -3553,6 +3653,7 @@ void setup() {
   Serial2.begin(LINK_BAUD, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
   proInit();
 
+  Wire.setBufferSize(256);      // смуга екрана (1 + 128 байт) — однією транзакцією
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   Wire.setClock(400000);
   Wire.setTimeOut(20);          // збій на шині не повинен підвішувати програму
@@ -3685,18 +3786,26 @@ void loop() {
   // Малювання: на межі FPS під час анімації, 50 мс на екрані сну, 60 мс на живих екранах
   static uint32_t tDraw = 0;
   if (oledOk && !otaBusy && !deepOff) {
-    // швидко (16 мс) — лише поки щось рухається; у спокої рідше, щоб не завантажувати I2C і loop()
-    bool anim = !asleep && (transT < 1.0f || menuAnimating() || animMoving || toastMsg[0]);
-    uint32_t period = asleep ? SAVER_FRAME_MS : (anim ? 16 : (page == P_MAIN ? 50 : 100));
-    if (dirty || now - tDraw >= period) {
-      frameDt = constrain((now - tDraw) / 1000.0f, 0.001f, 0.1f);
+    // рівні ~60 к/с завжди (шина екрана на OLED_I2C_HZ, кадр передається ~11 мс)
+    if (dirty || now - tDraw >= FRAME_MS) {
+      static uint32_t lastFrame = 0;
+      frameDt = constrain((now - lastFrame) / 1000.0f, 0.001f, 0.1f);
+      lastFrame = now;
+      // фіксований ритм 60 к/с: наступний кадр від запланованого часу, а не від кінця цього
+      tDraw = (dirty || now - tDraw >= 3 * FRAME_MS) ? now : tDraw + FRAME_MS;
       dirty = false;
-      tDraw = now;
       stepAnim();
       animMoving = false;
       oled.clearBuffer();
       if (asleep) drawSaver(); else drawUi();
-      oled.sendBuffer();
+      uint32_t t0 = micros();
+      oledFlush();
+      frameSendUs = frameSendUs * 0.9f + (micros() - t0) * 0.1f;
+      memcpy(scrShot, oled.getBufferPtr(), sizeof(scrShot));   // для трансляції у веб-меню
+      static uint32_t fpsT = 0;
+      static uint16_t fpsN = 0;
+      fpsN++;
+      if (now - fpsT >= 1000) { frameFps = fpsN * 1000.0f / (now - fpsT); fpsN = 0; fpsT = now; }
     }
   }
 

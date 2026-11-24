@@ -95,6 +95,16 @@ svg text{fill:var(--mut);font-size:11px}
 .hint{color:var(--warn);font-size:12px;margin:6px 4px 0;min-height:14px}.err{color:var(--bad);font-weight:600;font-size:13px;min-height:18px;margin-top:10px}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid #fff6;border-top-color:#fff;border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes sp{to{transform:rotate(360deg)}}
+.oled{position:relative;background:#000;border-radius:14px;padding:10px;border:1px solid #1d2636;box-shadow:inset 0 0 30px #000,0 10px 30px #0006}
+.oled canvas{display:block;width:100%;image-rendering:pixelated;image-rendering:crisp-edges;filter:drop-shadow(0 0 3px #7cc4ff88)}
+.oled .live{position:absolute;top:16px;right:16px;font:700 10px system-ui;letter-spacing:1px;color:#ff6b6b;display:flex;align-items:center;gap:5px;opacity:.85}
+.oled .live i{width:7px;height:7px;border-radius:50%;background:#ff4d4d;box-shadow:0 0 8px #ff4d4d;animation:blink 1.2s infinite}
+@keyframes blink{50%{opacity:.25}}
+.pad{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:8px;margin-top:12px}
+.pad button{border:1px solid var(--line);background:#ffffff0c;color:var(--tx);border-radius:14px;padding:13px 6px;font:700 15px system-ui;cursor:pointer;transition:transform .1s,background .2s;touch-action:manipulation;user-select:none}
+.pad button:active{transform:scale(.94);background:#5b9cff33}
+.pad .ok{background:linear-gradient(135deg,var(--acc),var(--acc2));border:0;color:#fff;box-shadow:0 6px 18px #5b9cff44}
+.pad2{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px}
 .offbar{display:none;margin-top:12px;padding:12px 14px;border-radius:14px;background:#f8727222;color:#ffb4b4;font-weight:600}
 .offbar.show{display:block}
 </style></head><body><div class="wrap">
@@ -103,6 +113,12 @@ svg text{fill:var(--mut);font-size:11px}
 <div class="offbar" id="offBar">Усе вимкнено (кнопка CONF або пульт). <button class="btn" style="margin-left:8px;padding:6px 12px" onclick="act('allon')">Увімкнути</button></div>
 
 <section id="t-home" class="act">
+ <div class="card" style="margin-top:12px"><h3>Дисплей <span class="sub" id="dispInfo"></span></h3>
+  <div class="oled" id="oledBox"><canvas id="scr" width="128" height="64"></canvas><div class="live"><i></i>LIVE</div></div>
+  <div class="pad"><button onclick="key('left')" title="←">⟲ Ліво</button><button class="ok" onclick="key('ok')" title="Enter">OK</button><button onclick="key('right')" title="→">Право ⟳</button></div>
+  <div class="pad2"><button class="btn ghost" onclick="key('back')" title="Esc">BACK</button><button class="btn ghost" onclick="key('conf')">CONF</button><button class="btn ghost" id="wakeBtn" onclick="key(S&&S.disp.asleep?'wake':'sleep')">Заставка</button></div>
+  <div class="row" style="display:block;margin-top:8px"><label>Яскравість <b id="s0hv"></b></label><input type="range" min="5" max="100" id="s0h" data-k="scr0"></div>
+  <div class="sub">Крутіть коліщатком над екраном або стрілками ← →, Enter — OK, Esc — BACK.</div></div>
  <div class="card" style="margin-top:12px"><div class="glow" style="background:#5b9cff"></div>
   <div class="hero"><div><div class="sub" id="wxWhere">Погода</div><div class="t" id="wxT">--°</div><div id="wxD" style="font-weight:600;margin-top:6px">…</div></div><div class="ico" id="wxI">⛅</div></div>
   <div class="chips" id="wxChips"></div></div>
@@ -260,7 +276,7 @@ function render(){if(!S)return;const s=S;
  relCards();
  seg($('ledMode'),s.led.mode,'lmode');$('ledNow').textContent=s.led.on?s.fx[s.led.fx]+' '+s.led.pct+'%':'вимкнено';$('ledNow').className='pill '+(s.led.on?'on':'');
  ['fxN','fxD'].forEach(id=>{const e=$(id);if(!e.options.length)s.fx.forEach((f,i)=>e.add(new Option(f,i)));if(!(lock[e.dataset.k]&&Date.now()-lock[e.dataset.k]<2500))e.value=id=='fxN'?s.led.fxN:s.led.fxD});
- setRange('brN',s.led.brN,pct);setRange('brD',s.led.brD,pct);setRange('s0',s.scr[0],pct);setRange('s1',s.scr[1],pct);setRange('s2',s.scr[2],pct);
+ setRange('brN',s.led.brN,pct);setRange('brD',s.led.brD,pct);setRange('s0',s.scr[0],pct);setRange('s0h',s.scr[0],pct);$('wakeBtn').textContent=s.disp.asleep?'Розбудити':'Заставка';setRange('s1',s.scr[1],pct);setRange('s2',s.scr[2],pct);
  setRange('sl',s.set.sleep,sec);setRange('dl',s.set.dly,v=>v+' с');
  [['cal',s.set.cal],['sun',s.set.sun],['nof',s.set.nof],['ap',s.wifi.ap],['lman',s.set.lman]].forEach(([id,v])=>{const e=$(id);if(!(lock[e.dataset.k]&&Date.now()-lock[e.dataset.k]<2500))e.checked=!!v});
  if(!(lock.noh&&Date.now()-lock.noh<2500))$('noh').value=s.set.noh;
@@ -297,5 +313,19 @@ function chart(o){const W=360,H=190,L=30,R=8,T=18,B=30;const v=o.t.filter(x=>x!=
  let mx=o.t.indexOf(Math.max(...v)),mn=o.t.indexOf(Math.min(...v));
  let lab=`<text x="${X(mx)}" y="${Y(o.t[mx])-8}" text-anchor="middle" style="fill:#fff;font-weight:700;font-size:12px">${sg(o.t[mx])}°</text><text x="${X(mn)}" y="${Y(o.t[mn])+16}" text-anchor="middle" style="fill:#9cc2ff;font-weight:700;font-size:12px">${sg(o.t[mn])}°</text>`;
  $('chart').innerHTML=`<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8b5bff" stop-opacity=".55"/><stop offset="1" stop-color="#5b9cff" stop-opacity="0"/></linearGradient><linearGradient id="gl" x1="0" x2="1"><stop offset="0" stop-color="#5b9cff"/><stop offset="1" stop-color="#c084fc"/></linearGradient></defs>${grid}${bars}<path d="${area}" fill="url(#g)"/><path d="${path}" fill="none" stroke="url(#gl)" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>${dots}${lab}${xs}`}
-function openHash(){const b=document.querySelector('nav button[data-t="'+location.hash.slice(1)+'"]');if(b)b.click()}openHash();poll();setInterval(poll,1500);loadFc();setInterval(loadFc,600000);
+function openHash(){const b=document.querySelector('nav button[data-t="'+location.hash.slice(1)+'"]');if(b)b.click()}openHash();// ---- трансляція екрана ----
+const cv=$('scr'),cx=cv.getContext('2d'),img=cx.createImageData(128,64);let scrBusy=false,frames=0,fT=Date.now();
+async function scrLoop(){if(document.hidden||!$('t-home').classList.contains('act')){setTimeout(scrLoop,400);return}
+ try{const r=await fetch('/api/screen',{cache:'no-store'});const b=new Uint8Array(await r.arrayBuffer());if(b.length==1024){const d=img.data;
+  for(let p=0;p<8;p++)for(let x=0;x<128;x++){const v=b[p*128+x];for(let k=0;k<8;k++){const i=((p*8+k)*128+x)*4,on=v>>k&1;d[i]=on?190:4;d[i+1]=on?228:8;d[i+2]=on?255:14;d[i+3]=255}}
+  cx.putImageData(img,0,0);frames++}}catch(e){await new Promise(r=>setTimeout(r,800))}
+ if(Date.now()-fT>2000){$('dispInfo').textContent=(S?'екран '+Math.round(S.disp.fps)+' к/с · ':'')+'трансляція '+Math.round(frames*1000/(Date.now()-fT))+' к/с';frames=0;fT=Date.now()}
+ setTimeout(scrLoop,40)}
+async function key(k){await api('/api/key?k='+k)}
+let wheelT=0;$('oledBox').addEventListener('wheel',e=>{e.preventDefault();const n=Date.now();if(n-wheelT<60)return;wheelT=n;key(e.deltaY>0?'right':'left')},{passive:false});
+document.addEventListener('keydown',e=>{if(!$('t-home').classList.contains('act')||document.activeElement.tagName=='INPUT'||document.activeElement.tagName=='SELECT')return;
+ const m={ArrowLeft:'left',ArrowRight:'right',Enter:'ok',Escape:'back',Backspace:'back'};if(m[e.key]){e.preventDefault();key(m[e.key])}});
+bindRange('s0h',pct);
+scrLoop();
+poll();setInterval(poll,1500);loadFc();setInterval(loadFc,600000);
 </script></body></html>)HTML";
