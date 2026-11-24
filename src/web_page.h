@@ -154,6 +154,13 @@ svg text{fill:var(--mut);font-size:11px}
   <div class="row"><label>Нічне вимкнення RGB<small>вимикати з вказаної години</small></label><label class="sw"><input type="checkbox" id="nof" data-k="nof"><i></i></label></div>
   <div class="row"><label>Година нічного вимкнення</label><select id="noh" data-k="noh"></select></div>
   <div class="row"><label>Калібрування LDR<small id="ldrRange"></small></label><button class="btn ghost" onclick="act('calreset')">Скинути</button></div></div>
+ <h2>Слова освітленості</h2>
+ <div class="card"><div class="row"><label>Ручні межі<small>інакше — автоматично від калібрування LDR</small></label><label class="sw"><input type="checkbox" id="lman" data-k="lman"><i></i></label></div>
+  <div class="sub" style="margin:2px 0 6px">Зараз фоторезистор: <b id="ltNow">--</b></div>
+  <div id="ltBox">
+  <div class="row" style="display:block"><label>🌑 Темно — нижче <b id="lt1v"></b></label><input type="range" min="100" max="3250" step="10" id="lt1" data-k="lt1"></div>
+  <div class="row" style="display:block"><label>🌆 Сутінки — нижче <b id="lt2v"></b></label><input type="range" min="100" max="3250" step="10" id="lt2" data-k="lt2"></div>
+  <div class="row" style="display:block"><label>🌤 Світло — нижче <b id="lt3v"></b> <small>вище — Яскраво</small></label><input type="range" min="100" max="3250" step="10" id="lt3" data-k="lt3"></div></div></div>
  <h2>Мережа Wi-Fi</h2>
  <div class="card"><div class="row"><label>Підключення<small id="netSt">…</small></label><button class="btn" id="scanBtn" onclick="scan()">Знайти мережі</button></div>
   <div id="nets"></div>
@@ -226,8 +233,8 @@ function fill(r){r.style.setProperty('--p',((r.value-r.min)/(r.max-r.min)*100)+'
 function bindRange(id,fmt){const r=$(id),v=$(id+'v');r.oninput=()=>{fill(r);if(v)v.textContent=fmt(r.value);lock[r.dataset.k]=Date.now()};r.onchange=()=>set(r.dataset.k,r.value)}
 function setRange(id,val,fmt){const r=$(id);if(lock[r.dataset.k]&&Date.now()-lock[r.dataset.k]<2500)return;r.value=val;fill(r);const v=$(id+'v');if(v)v.textContent=fmt(val)}
 const pct=v=>v+'%',sec=v=>v>=60?Math.floor(v/60)+' хв '+(v%60?v%60+' с':''):v+' с';
-bindRange('brN',pct);bindRange('brD',pct);bindRange('s0',pct);bindRange('s1',pct);bindRange('s2',pct);bindRange('sl',sec);bindRange('dl',v=>v+' с');
-['cal','sun','nof','ap'].forEach(id=>$(id).onchange=e=>set(e.target.dataset.k,e.target.checked?1:0));
+bindRange('brN',pct);bindRange('brD',pct);bindRange('s0',pct);bindRange('s1',pct);bindRange('s2',pct);bindRange('sl',sec);bindRange('dl',v=>v+' с');const volt=v=>(v/1000).toFixed(2)+' В';bindRange('lt1',volt);bindRange('lt2',volt);bindRange('lt3',volt);
+['cal','sun','nof','ap','lman'].forEach(id=>$(id).onchange=e=>set(e.target.dataset.k,e.target.checked?1:0));
 ['fxN','fxD','noh'].forEach(id=>$(id).onchange=e=>set(e.target.dataset.k,e.target.value));
 for(let h=0;h<24;h++)$('noh').add(new Option(String(h).padStart(2,'0')+':00',h));
 function seg(el,cur,key){if(!el.children.length){MODES.forEach((m,i)=>{const b=document.createElement('button');b.textContent=m;b.onclick=()=>{[...el.children].forEach(x=>x.classList.toggle('act',x==b));set(key,i)};el.appendChild(b)})}if(lock[key]&&Date.now()-lock[key]<2500)return;[...el.children].forEach((b,i)=>b.classList.toggle('act',i==cur))}
@@ -255,8 +262,9 @@ function render(){if(!S)return;const s=S;
  ['fxN','fxD'].forEach(id=>{const e=$(id);if(!e.options.length)s.fx.forEach((f,i)=>e.add(new Option(f,i)));if(!(lock[e.dataset.k]&&Date.now()-lock[e.dataset.k]<2500))e.value=id=='fxN'?s.led.fxN:s.led.fxD});
  setRange('brN',s.led.brN,pct);setRange('brD',s.led.brD,pct);setRange('s0',s.scr[0],pct);setRange('s1',s.scr[1],pct);setRange('s2',s.scr[2],pct);
  setRange('sl',s.set.sleep,sec);setRange('dl',s.set.dly,v=>v+' с');
- [['cal',s.set.cal],['sun',s.set.sun],['nof',s.set.nof],['ap',s.wifi.ap]].forEach(([id,v])=>{const e=$(id);if(!(lock[e.dataset.k]&&Date.now()-lock[e.dataset.k]<2500))e.checked=!!v});
+ [['cal',s.set.cal],['sun',s.set.sun],['nof',s.set.nof],['ap',s.wifi.ap],['lman',s.set.lman]].forEach(([id,v])=>{const e=$(id);if(!(lock[e.dataset.k]&&Date.now()-lock[e.dataset.k]<2500))e.checked=!!v});
  if(!(lock.noh&&Date.now()-lock.noh<2500))$('noh').value=s.set.noh;
+ [0,1,2].forEach(k=>setRange('lt'+(k+1),s.set.lt[k],volt));$('ltBox').style.opacity=s.set.lman?1:.4;$('ltNow').textContent=s.ldr.absent?'не підключено':(s.ldr.mv/1000).toFixed(2)+' В · '+s.ldr.word;
  $('ldrRange').textContent='шкала '+Math.round(s.ldr.lo)+'–'+Math.round(s.ldr.hi)+' мВ';
  kv($('apKv'),(s.wifi.ap||s.net.apTemp)?[['Назва',s.wifi.apSsid],['Пароль',s.wifi.apPass],['Адреса','http://'+s.wifi.apIp],['Підключено',s.wifi.apClients+' пристр.']]:[['Стан','вимкнено']]);
  const up=s.sys.up,d=Math.floor(up/86400),hh=Math.floor(up/3600)%24,mm=Math.floor(up/60)%60;

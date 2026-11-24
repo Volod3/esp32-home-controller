@@ -104,6 +104,11 @@
 #define LDR_ABSENT_MV          100      // нижче цього довше LDR_ABSENT_MS = фотоопір не підключено (у темряві LDR дає <500 мВ, тож поріг низький)
 #define LDR_ABSENT_MS          10000
 #define LDR_UNCAL_MAX_MV       3300     // шкала, поки калібрування не набрало даних
+// Слова освітленості (Темно / Сутінки / Світло / Яскраво): ручні межі у мВ за замовчуванням
+#define DEF_LIGHT_MANUAL       1        // 1 = ручні межі, 0 = автоматично від калібрування LDR
+#define DEF_LT1_MV             1000     // нижче — Темно
+#define DEF_LT2_MV             1700     // нижче — Сутінки
+#define DEF_LT3_MV             2300     // нижче — Світло, вище — Яскраво
 #define DEF_THR_ON_PM          300      // за замовч.: вмикати нижче 30.0% діапазону
 #define DEF_THR_OFF_PM         450      // за замовч.: вимикати вище 45.0% діапазону
 #define THR_HYST_PM            20       // гістерезис: вмикається на 2.0% нижче порогу вимкнення
@@ -192,6 +197,8 @@ static uint16_t thrOff[NUM_RELAYS]     = {DEF_THR_OFF_PM, DEF_THR_OFF_PM, DEF_TH
 static inline uint16_t thrOnPm(int i) { return thrOff[i] - THR_HYST_PM; }
 static uint16_t switchDelaySec = DEF_SWITCH_DELAY_SEC;
 static bool     calAuto       = true;     // true = діапазон LDR підлаштовується сам
+static bool     lightManual   = DEF_LIGHT_MANUAL;                    // слова освітленості за ручними межами
+static uint16_t lightThr[3]   = {DEF_LT1_MV, DEF_LT2_MV, DEF_LT3_MV};  // межі Темно|Сутінки|Світло|Яскраво, мВ
 static bool     sunGate       = DEF_SUN_GATE;   // true = блокувати вмикання вдень за прогнозом
 static bool     nightOff      = DEF_NIGHT_OFF;  // true = нічне вимкнення Авто-реле
 static uint8_t  nightHour     = DEF_NIGHT_OFF_HOUR;
@@ -357,6 +364,19 @@ static void fixThresholds(int i) {
   thrOff[i] = constrain((int)thrOff[i], 10 + THR_HYST_PM, 990);
 }
 
+// Межі слів освітленості: по зростанню, мінімум 50 мВ між ними. keep — яку межу щойно змінили (її не рухаємо)
+static void fixLightThr(int keep) {
+  uint16_t* t = lightThr;
+  for (int k = 0; k < 3; k++) t[k] = constrain((int)t[k], 100, 3250);
+  if (keep < 0) {
+    if (!(t[0] + 50 <= t[1] && t[1] + 50 <= t[2])) { t[0] = DEF_LT1_MV; t[1] = DEF_LT2_MV; t[2] = DEF_LT3_MV; }
+    return;
+  }
+  for (int k = keep + 1; k < 3; k++) if (t[k] < t[k - 1] + 50) t[k] = min(3250, t[k - 1] + 50);   // підсунути сусідів
+  for (int k = keep - 1; k >= 0; k--) if (t[k] + 50 > t[k + 1]) t[k] = max(100, t[k + 1] - 50);
+  for (int k = 1; k < 3; k++) if (t[k] < t[k - 1] + 50) t[k] = t[k - 1] + 50;                      // на краях діапазону
+}
+
 static void loadPrefs() {
   prefs.begin("ctl", false);
   relayMode[0]   = prefs.getUChar("m0", MODE_AUTO);
@@ -368,6 +388,10 @@ static void loadPrefs() {
   thrOff[2]      = prefs.getUShort("off2", DEF_THR_OFF_PM);
   switchDelaySec = prefs.getUShort("dly",  DEF_SWITCH_DELAY_SEC);
   calAuto        = prefs.getBool("cal", true);
+  lightManual    = prefs.getBool("lman", DEF_LIGHT_MANUAL);
+  lightThr[0]    = prefs.getUShort("lt1", DEF_LT1_MV);
+  lightThr[1]    = prefs.getUShort("lt2", DEF_LT2_MV);
+  lightThr[2]    = prefs.getUShort("lt3", DEF_LT3_MV);
   sunGate        = prefs.getBool("sun", DEF_SUN_GATE);
   nightOff       = prefs.getBool("nof", DEF_NIGHT_OFF);
   nightHour      = prefs.getUChar("noh", DEF_NIGHT_OFF_HOUR);
@@ -403,6 +427,7 @@ static void loadPrefs() {
     fixThresholds(i);
   }
   if (nightHour > 23) nightHour = DEF_NIGHT_OFF_HOUR;
+  fixLightThr(-1);
   sleepSec       = constrain(sleepSec, 10, 600);
   switchDelaySec = constrain(switchDelaySec, 1, 120);
   savedLo = ldrLo;
@@ -420,6 +445,10 @@ static void saveSettings() {
   prefs.putUShort("off2", thrOff[2]);
   prefs.putUShort("dly",  switchDelaySec);
   prefs.putBool("cal", calAuto);
+  prefs.putBool("lman", lightManual);
+  prefs.putUShort("lt1", lightThr[0]);
+  prefs.putUShort("lt2", lightThr[1]);
+  prefs.putUShort("lt3", lightThr[2]);
   prefs.putBool("sun", sunGate);
   prefs.putBool("nof", nightOff);
   prefs.putUChar("noh", nightHour);
@@ -1862,13 +1891,18 @@ static const char* saverLightWord(const struct tm* t) {
   }
   // Рівень за швидким значенням; показ міняється, лише коли новий рівень тримається LIGHT_HOLD_MS,
   // і одразу стрибає на нього — без "перебігання" проміжних слів, поки фоторезистор доходить до темряви
+  // Режими: ручні межі у мВ (налаштування) або автоматично — чверті відкаліброваної шкали.
   const uint32_t LIGHT_HOLD_MS = 1000;
   static int8_t   cand = -1;
   static uint32_t candT = 0;
-  float f = ldrFrac(ldrFast < 0 ? ldrMv : ldrFast);
-  int tgt = (lv < 0) ? (f < 0.25f ? 0 : f < 0.5f ? 1 : f < 0.75f ? 2 : 3) : lv;
-  while (tgt < 3 && f > 0.25f * (tgt + 1) + 0.03f) tgt++;     // гістерезис 3% навколо меж
-  while (tgt > 0 && f < 0.25f * tgt - 0.03f)       tgt--;
+  float mv = ldrFast < 0 ? ldrMv : ldrFast;
+  float x, b[3], h;
+  if (lightManual) { x = mv; for (int k = 0; k < 3; k++) b[k] = lightThr[k]; h = 30; }   // гістерезис 30 мВ
+  else             { x = ldrFrac(mv); b[0] = 0.25f; b[1] = 0.5f; b[2] = 0.75f; h = 0.03f; }
+  int tgt = lv;
+  if (tgt < 0) { tgt = 0; while (tgt < 3 && x >= b[tgt]) tgt++; }
+  while (tgt < 3 && x > b[tgt] + h)     tgt++;
+  while (tgt > 0 && x < b[tgt - 1] - h) tgt--;
   if (lv < 0) lv = tgt;
   uint32_t now = millis();
   if (tgt == lv) {
@@ -2262,10 +2296,10 @@ static const char* wifiWord(int q) {
 static void setAp(bool on);
 
 // ---- Settings ----
-#define SET_N 8
+#define SET_N 12
 static uint8_t kindSet(int i) {
-  if (i <= 1 || i == 5) return RK_EDIT;
-  if (i <= 4) return RK_TOGGLE;
+  if (i <= 1 || i == 5 || (i >= 8 && i <= 10)) return RK_EDIT;
+  if (i <= 4 || i == 7) return RK_TOGGLE;
   if (i == 6) return RK_ACTION;
   return RK_INFO;
 }
@@ -2278,6 +2312,10 @@ static void rowSet(int i, char* l, char* v) {
     case 4: strcpy(l, "Нічне вимк.");   strcpy(v, nightOff ? "Вкл" : "Вимк"); break;
     case 5: strcpy(l, "Година вимк.");  sprintf(v, "%02u:00", (unsigned)nightHour); break;
     case 6: strcpy(l, "Скинути LDR");   strcpy(v, "OK"); break;
+    case 7: strcpy(l, "Межі світла");   strcpy(v, lightManual ? "Ручні" : "Авто"); break;
+    case 8: strcpy(l, "Темно до");      sprintf(v, "%.2f В", lightThr[0] / 1000.0f); break;
+    case 9: strcpy(l, "Сутінки до");    sprintf(v, "%.2f В", lightThr[1] / 1000.0f); break;
+    case 10: strcpy(l, "Світло до");    sprintf(v, "%.2f В", lightThr[2] / 1000.0f); break;
     default: strcpy(l, "Прошивка");     strcpy(v, __DATE__); break;
   }
 }
@@ -2286,6 +2324,12 @@ static void adjSet(int i, int dir, uint32_t gap) {
     case 0: sleepSec = constrain((int)sleepSec + dir * (gap < 110 ? 30 : 5), 10, 600); break;
     case 1: switchDelaySec = constrain((int)switchDelaySec + dir * (gap < 110 ? 5 : 1), 1, 120); break;
     case 5: nightHour = (nightHour + dir + 24) % 24; break;
+    case 8: case 9: case 10: {
+      int k = i - 8;
+      lightThr[k] = constrain((int)lightThr[k] + dir * (gap < 110 ? 100 : 20), 100, 3250);
+      fixLightThr(k);
+      break;
+    }
   }
 }
 static void actSet(int i) {
@@ -2293,6 +2337,7 @@ static void actSet(int i) {
     case 2: calAuto = !calAuto;   break;
     case 3: sunGate = !sunGate;   break;
     case 4: nightOff = !nightOff; break;
+    case 7: lightManual = !lightManual; break;
     case 6: ldrLo = ldrHi = ldrMv; saveCalib(); toast("LDR скинуто"); return;
   }
   saveSettings();
@@ -3185,8 +3230,8 @@ static void webState() {
   for (int i = 0; i < FX_COUNT; i++) jf(s, "%s\"%s\"", i ? "," : "", FX_NAMES[i]);
   s += "],";
   jf(s, "\"scr\":[%d,%d,%d],", scrBr[0], scrBr[1], scrBr[2]);
-  jf(s, "\"set\":{\"sleep\":%d,\"dly\":%d,\"cal\":%d,\"sun\":%d,\"nof\":%d,\"noh\":%d},",
-     sleepSec, switchDelaySec, calAuto, sunGate, nightOff, nightHour);
+  jf(s, "\"set\":{\"sleep\":%d,\"dly\":%d,\"cal\":%d,\"sun\":%d,\"nof\":%d,\"noh\":%d,\"lman\":%d,\"lt\":[%d,%d,%d]},",
+     sleepSec, switchDelaySec, calAuto, sunGate, nightOff, nightHour, lightManual, lightThr[0], lightThr[1], lightThr[2]);
   if (sunDataValid()) jf(s, "\"sun\":{\"rise\":\"%02d:%02d\",\"set\":\"%02d:%02d\"},", sunRiseMin / 60, sunRiseMin % 60, sunSetMin / 60, sunSetMin % 60);
   else                s += "\"sun\":{\"rise\":\"\",\"set\":\"\"},";
   bool wv = wxValid();
@@ -3262,6 +3307,8 @@ static void webSet() {
   } else if (k == "sleep") sleepSec = constrain(v, 10, 600);
   else if (k == "dly")   switchDelaySec = constrain(v, 1, 120);
   else if (k == "cal")   calAuto = v != 0;
+  else if (k == "lman")  lightManual = v != 0;
+  else if (k == "lt1" || k == "lt2" || k == "lt3") { int i = k[2] - '1'; lightThr[i] = constrain(v, 100, 3250); fixLightThr(i); }
   else if (k == "sun")   sunGate = v != 0;
   else if (k == "nof")   nightOff = v != 0;
   else if (k == "noh")   nightHour = constrain(v, 0, 23);
