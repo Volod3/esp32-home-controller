@@ -11,7 +11,8 @@ static const char WEB_PAGE[] PROGMEM = R"HTML(<!doctype html>
 :root{--bg:#0b0f17;--card:#131a26;--card2:#18202f;--line:#243044;--tx:#e8eef8;--mut:#8a97ad;--acc:#5b9cff;--acc2:#8b5bff;--ok:#36d399;--warn:#fbbd23;--bad:#f87272;--r:18px}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-body{padding:0 14px calc(90px + env(safe-area-inset-bottom));background:radial-gradient(1200px 600px at 80% -10%,#1b2b55 0,transparent 60%),radial-gradient(900px 500px at -10% 10%,#2a1b4d 0,transparent 55%),var(--bg);background-attachment:fixed;min-height:100vh}
+body{padding:0 14px calc(90px + env(safe-area-inset-bottom));background:var(--bg);min-height:100vh}
+body:before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(1200px 600px at 80% -10%,#1b2b55 0,transparent 60%),radial-gradient(900px 500px at -10% 10%,#2a1b4d 0,transparent 55%)}
 .wrap{max-width:980px;margin:0 auto}
 header{display:flex;align-items:center;justify-content:space-between;padding:18px 2px 10px;gap:12px}
 .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px}
@@ -19,7 +20,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:18p
 .clock{text-align:right}.clock b{font-size:22px;font-variant-numeric:tabular-nums;letter-spacing:.5px}.clock div{color:var(--mut);font-size:12px}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--mut);margin-right:6px;vertical-align:middle}
 .dot.on{background:var(--ok);box-shadow:0 0 10px var(--ok)}.dot.off{background:var(--bad)}
-nav{position:fixed;left:0;right:0;bottom:0;z-index:9;padding:8px 10px calc(8px + env(safe-area-inset-bottom));background:#0b0f17e8;backdrop-filter:blur(14px);border-top:1px solid var(--line)}
+nav{position:fixed;left:0;right:0;bottom:0;z-index:9;padding:8px 10px calc(8px + env(safe-area-inset-bottom));background:#0b0f17f7;border-top:1px solid var(--line)}
 nav .in{max-width:980px;margin:0 auto;display:flex;gap:4px;overflow-x:auto;scrollbar-width:none}
 nav button{flex:1;min-width:64px;border:0;background:none;color:var(--mut);padding:7px 4px;border-radius:12px;font:600 11px system-ui;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;transition:.2s}
 nav button span{font-size:19px;line-height:1}
@@ -96,7 +97,7 @@ svg text{fill:var(--mut);font-size:11px}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid #fff6;border-top-color:#fff;border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes sp{to{transform:rotate(360deg)}}
 .oled{position:relative;background:#000;border-radius:14px;padding:10px;border:1px solid #1d2636;box-shadow:inset 0 0 30px #000,0 10px 30px #0006}
-.oled canvas{display:block;width:100%;image-rendering:pixelated;image-rendering:crisp-edges;filter:drop-shadow(0 0 3px #7cc4ff88)}
+.oled canvas{display:block;width:100%;image-rendering:pixelated;image-rendering:crisp-edges}
 .oled .live{position:absolute;top:16px;right:16px;font:700 10px system-ui;letter-spacing:1px;color:#ff6b6b;display:flex;align-items:center;gap:5px;opacity:.85}
 .oled .live i{width:7px;height:7px;border-radius:50%;background:#ff4d4d;box-shadow:0 0 8px #ff4d4d;animation:blink 1.2s infinite}
 @keyframes blink{50%{opacity:.25}}
@@ -105,6 +106,8 @@ svg text{fill:var(--mut);font-size:11px}
 .pad button:active{transform:scale(.94);background:#5b9cff33}
 .pad .ok{background:linear-gradient(135deg,var(--acc),var(--acc2));border:0;color:#fff;box-shadow:0 6px 18px #5b9cff44}
 .pad2{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px}
+.dispCard{margin-top:12px}
+.dispCard.hide{display:none}
 .offbar{display:none;margin-top:12px;padding:12px 14px;border-radius:14px;background:#f8727222;color:#ffb4b4;font-weight:600}
 .offbar.show{display:block}
 </style></head><body><div class="wrap">
@@ -113,12 +116,7 @@ svg text{fill:var(--mut);font-size:11px}
 <div class="offbar" id="offBar">Усе вимкнено (кнопка CONF або пульт). <button class="btn" style="margin-left:8px;padding:6px 12px" onclick="act('allon')">Увімкнути</button></div>
 
 <section id="t-home" class="act">
- <div class="card" style="margin-top:12px"><h3>Дисплей <span class="sub" id="dispInfo"></span></h3>
-  <div class="oled" id="oledBox"><canvas id="scr" width="128" height="64"></canvas><div class="live"><i></i>LIVE</div></div>
-  <div class="pad"><button onclick="key('left')" title="←">⟲ Ліво</button><button class="ok" onclick="key('ok')" title="Enter">OK</button><button onclick="key('right')" title="→">Право ⟳</button></div>
-  <div class="pad2"><button class="btn ghost" onclick="key('back')" title="Esc">BACK</button><button class="btn ghost" onclick="key('conf')">CONF</button><button class="btn ghost" id="wakeBtn" onclick="key(S&&S.disp.asleep?'wake':'sleep')">Заставка</button></div>
-  <div class="row" style="display:block;margin-top:8px"><label>Яскравість <b id="s0hv"></b></label><input type="range" min="5" max="100" id="s0h" data-k="scr0"></div>
-  <div class="sub">Крутіть коліщатком над екраном або стрілками ← →, Enter — OK, Esc — BACK.</div></div>
+
  <div class="card" style="margin-top:12px"><div class="glow" style="background:#5b9cff"></div>
   <div class="hero"><div><div class="sub" id="wxWhere">Погода</div><div class="t" id="wxT">--°</div><div id="wxD" style="font-weight:600;margin-top:6px">…</div></div><div class="ico" id="wxI">⛅</div></div>
   <div class="chips" id="wxChips"></div></div>
@@ -135,6 +133,14 @@ svg text{fill:var(--mut);font-size:11px}
   <div class="chips" id="relChips"></div></div>
  <h2>Швидкі дії</h2>
  <div class="btns"><button class="btn red" id="allBtn" onclick="toggleAll()">Вимкнути все</button><button class="btn ghost" onclick="act('wx')">Оновити погоду</button></div>
+ <h2>Дисплей</h2>
+ <div class="card"><div class="row"><label>Керування дисплеєм<small>живий екран плати і пульт</small></label><label class="sw"><input type="checkbox" id="wdisp" data-k="wdisp"><i></i></label></div></div>
+ <div class="card dispCard hide" id="dispCard"><h3>Екран <span class="sub" id="dispInfo"></span></h3>
+  <div class="oled" id="oledBox"><canvas id="scr" width="128" height="64"></canvas><div class="live"><i></i>LIVE</div></div>
+  <div class="pad"><button onclick="key('left')" title="←">⟲ Ліво</button><button class="ok" onclick="key('ok')" title="Enter">OK</button><button onclick="key('right')" title="→">Право ⟳</button></div>
+  <div class="pad2"><button class="btn ghost" onclick="key('back')" title="Esc">BACK</button><button class="btn ghost" onclick="key('conf')">CONF</button><button class="btn ghost" id="wakeBtn" onclick="key(S&&S.disp.asleep?'wake':'sleep')">Заставка</button></div>
+  <div class="row" style="display:block;margin-top:8px"><label>Яскравість <b id="s0hv"></b></label><input type="range" min="5" max="100" id="s0h" data-k="scr0"></div>
+  <div class="sub">Крутіть коліщатком над екраном або стрілками ← →, Enter — OK, Esc — BACK.</div></div>
 </section>
 
 <section id="t-rel"><h2>Реле</h2><div class="grid" id="relCards" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr))"></div>
@@ -213,7 +219,7 @@ const sg=n=>{n=Math.round(n);return(n>0?'+':'')+n};
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),1600)}
 async function api(u){try{const r=await fetch(u,{cache:'no-store'});if(!r.ok)throw 0;return await r.json()}catch(e){return null}}
 async function set(k,v){lock[k]=Date.now();const j=await api('/api/set?k='+k+'&v='+v);if(j){S=j;render();toast('Збережено')}else toast('Нема зв\'язку')}
-async function act(a){const j=await api('/api/act?a='+a);const M={wx:'Оновлюю погоду…',calreset:'LDR скинуто',restart:'Перезавантаження…',sleep:'Сон',deep:'Глибокий сон',allon:'Увімкнено',alloff:'Усе вимкнено'};toast(j?M[a]||'Готово':'Нема зв\'язку');if(a=='wx')setTimeout(loadFc,8000);setTimeout(poll,400)}
+async function act(a){const j=await api('/api/act?a='+a);const M={wx:'Оновлюю погоду…',calreset:'LDR скинуто',restart:'Перезавантаження…',sleep:'Сон',deep:'Глибокий сон',allon:'Увімкнено',alloff:'Усе вимкнено'};toast(!j?'Нема зв\'язку':(j.ok===false&&j.err=='nowifi'?'Нема інтернету — прогноз не оновити':M[a]||'Готово'));if(a=='wx')setTimeout(loadFc,8000);setTimeout(poll,400)}
 function confirmAct(a,t,b){$('mT').textContent=t;$('mB').textContent=b;$('mOk').onclick=()=>{closeM();act(a)};$('modal').classList.add('show')}
 function confirmAct2(t,b,fn){$('mT').textContent=t;$('mB').textContent=b;$('mOk').onclick=()=>{closeM();fn()};$('modal').classList.add('show')}
 const clean=v=>v.replace(/^[\s\u00a0\u200b\ufeff]+|[\s\u00a0\u200b\ufeff]+$/g,'');
@@ -224,23 +230,24 @@ async function scan(){const b=$('scanBtn');b.disabled=true;b.innerHTML='<span cl
  await api('/api/scan?start=1');let ok=false;for(let i=0;i<25;i++){await new Promise(r=>setTimeout(r,700));const j=await api('/api/scan');if(j&&!j.busy&&j.list){renderNets(j.list);ok=true;break}}
  if(!ok)$('nets').innerHTML='<div class="sub" style="padding:12px 4px">Не вдалося просканувати. Спробуй ще раз.</div>';b.disabled=false;b.textContent='Знайти мережі'}
 function renderNets(l){$('nets').innerHTML=l.length?l.map((n,i)=>`<div class="net" data-i="${i}">${bars(n.rssi)}<div style="flex:1;min-width:0"><b style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(n.ssid)}</b><span class="sub">${n.rssi} дБм · канал ${n.ch}${n.cur?' · <span style="color:var(--ok)">підключено</span>':''}</span></div>${n.open?'<span class="sub">відкрита</span>':'🔒'}</div>`).join(''):'<div class="sub" style="padding:12px 4px">Мереж не знайдено</div>';
- document.querySelectorAll('.net').forEach(e=>e.onclick=()=>{const n=l[e.dataset.i];pickNet(n.ssid,n.open)})}
+ document.querySelectorAll('.net').forEach(e=>e.onclick=()=>{const n=l[e.dataset.i];pickNet(n.ssid,n.open,true)})}
 function spaceHint(id,h){const v=$(id).value;$(h).textContent=v!==clean(v)?'Пробіли на початку/в кінці буде прибрано':''}
 $('nSsid').oninput=()=>spaceHint('nSsid','nSsidH');$('nPass').oninput=()=>spaceHint('nPass','nPassH');
 $('nSsid').onblur=()=>{$('nSsid').value=clean($('nSsid').value);spaceHint('nSsid','nSsidH')};$('nPass').onblur=()=>{$('nPass').value=clean($('nPass').value);spaceHint('nPass','nPassH')};
 $('nPass').onkeydown=e=>{if(e.key=='Enter')joinNet()};
-function pickNet(ssid,open){$('nSsid').value=ssid;$('nSsidRow').style.display=ssid?'none':'';$('nTitle').textContent=ssid||'Мережа вручну';$('nPass').value='';$('nPass').type='password';$('nPassRow').style.display=open?'none':'';$('nErr').textContent='';$('nSsidH').textContent='';$('nPassH').textContent='';$('nOk').disabled=false;$('nOk').textContent='Підключити';$('netModal').classList.add('show');setTimeout(()=>(ssid?(open?$('nOk'):$('nPass')):$('nSsid')).focus(),60)}
-async function joinNet(){const s=clean($('nSsid').value),p=clean($('nPass').value);$('nSsid').value=s;$('nPass').value=p;const E=$('nErr');
+let netRaw=false;
+function pickNet(ssid,open,fromScan){netRaw=!!fromScan;$('nSsid').value=ssid;$('nSsidRow').style.display=ssid?'none':'';$('nTitle').textContent=ssid||'Мережа вручну';$('nPass').value='';$('nPass').type='password';$('nPassRow').style.display=open?'none':'';$('nErr').textContent='';$('nSsidH').textContent='';$('nPassH').textContent='';$('nOk').disabled=false;$('nOk').textContent='Підключити';$('netModal').classList.add('show');setTimeout(()=>(ssid?(open?$('nOk'):$('nPass')):$('nSsid')).focus(),60)}
+async function joinNet(){const s=netRaw?$('nSsid').value:clean($('nSsid').value),p=clean($('nPass').value);$('nSsid').value=s;$('nPass').value=p;const E=$('nErr');
  if(!s)return E.textContent='Вкажи назву мережі';if(bytes(s)>32)return E.textContent='Назва задовга (макс. 32 байти)';
- if(p&&p.length<8)return E.textContent='Пароль закороткий: мінімум 8 символів';if(p.length>63)return E.textContent='Пароль задовгий';
+ if(p&&p.length<8)return E.textContent='Пароль закороткий: мінімум 8 символів';if(p.length>63&&!/^[0-9a-fA-F]{64}$/.test(p))return E.textContent='Пароль задовгий';
  const b=$('nOk');b.disabled=true;b.innerHTML='<span class="spin"></span>Зберігаю';
- let r=null;try{r=await(await fetch('/api/wifi',{method:'POST',body:new URLSearchParams({ssid:s,pass:p})})).json()}catch(e){}
+ let r=null;try{r=await(await fetch('/api/wifi',{method:'POST',body:new URLSearchParams(netRaw?{ssid:s,pass:p,raw:1}:{ssid:s,pass:p})})).json()}catch(e){}
  b.disabled=false;b.textContent='Підключити';if(!r||!r.ok){E.textContent=r&&r.err||'Нема зв\'язку з ESP32';return}
  $('netModal').classList.remove('show');toast('Підключаюсь до «'+s+'»…');netWait=Date.now()}
 async function forgetNet(){let r=null;try{r=await(await fetch('/api/wifi',{method:'POST',body:new URLSearchParams({forget:1})})).json()}catch(e){}toast(r&&r.ok?'Повертаюсь до «'+r.ssid+'»':'Нема зв\'язку');netWait=Date.now()}
 let netWait=0;
 function netStatus(s){const n=s.net,M={connected:'підключено до «'+esc(s.wifi.ssid)+'»',connecting:'підключаюсь до «'+esc(n.saved)+'»…',failed:'не вдалося: перевір пароль до «'+esc(n.saved)+'»',nossid:'мережу «'+esc(n.saved)+'» не видно',none:'мережу не задано'};
- let t=M[n.st]||n.st;if(n.apTemp)t+=' · тимчасова точка '+esc(s.wifi.apSsid)+' увімкнена';$('netSt').innerHTML=t;$('netSt').style.color=n.st=='connected'?'var(--ok)':n.st=='connecting'?'var(--warn)':'var(--bad)';
+ let t=M[n.st]||n.st;if(n.apTemp)t+=' · тимчасова точка '+esc(s.wifi.apSsid)+' увімкнена';setH($('netSt'),t);$('netSt').style.color=n.st=='connected'?'var(--ok)':n.st=='connecting'?'var(--warn)':'var(--bad)';
  if(netWait&&n.st=='connected'&&Date.now()-netWait>1500){toast('Підключено до «'+s.wifi.ssid+'»');netWait=0}}
 function closeM(){$('modal').classList.remove('show')}
 function toggleAll(){if(!S)return;S.sys.allOff?act('allon'):confirmAct('alloff','Вимкнути все','Вимкнути реле, стрічку й екран (як кнопка CONF)?')}
@@ -250,12 +257,14 @@ function bindRange(id,fmt){const r=$(id),v=$(id+'v');r.oninput=()=>{fill(r);if(v
 function setRange(id,val,fmt){const r=$(id);if(lock[r.dataset.k]&&Date.now()-lock[r.dataset.k]<2500)return;r.value=val;fill(r);const v=$(id+'v');if(v)v.textContent=fmt(val)}
 const pct=v=>v+'%',sec=v=>v>=60?Math.floor(v/60)+' хв '+(v%60?v%60+' с':''):v+' с';
 bindRange('brN',pct);bindRange('brD',pct);bindRange('s0',pct);bindRange('s1',pct);bindRange('s2',pct);bindRange('sl',sec);bindRange('dl',v=>v+' с');const volt=v=>(v/1000).toFixed(2)+' В';bindRange('lt1',volt);bindRange('lt2',volt);bindRange('lt3',volt);
-['cal','sun','nof','ap','lman'].forEach(id=>$(id).onchange=e=>set(e.target.dataset.k,e.target.checked?1:0));
+['cal','sun','nof','ap','lman','wdisp'].forEach(id=>$(id).onchange=e=>set(e.target.dataset.k,e.target.checked?1:0));
 ['fxN','fxD','noh'].forEach(id=>$(id).onchange=e=>set(e.target.dataset.k,e.target.value));
 for(let h=0;h<24;h++)$('noh').add(new Option(String(h).padStart(2,'0')+':00',h));
 function seg(el,cur,key){if(!el.children.length){MODES.forEach((m,i)=>{const b=document.createElement('button');b.textContent=m;b.onclick=()=>{[...el.children].forEach(x=>x.classList.toggle('act',x==b));set(key,i)};el.appendChild(b)})}if(lock[key]&&Date.now()-lock[key]<2500)return;[...el.children].forEach((b,i)=>b.classList.toggle('act',i==cur))}
 function batCls(p){return p>=50?'ok':p>=20?'warn':'bad'}
-function kv(el,rows){el.innerHTML=rows.map(r=>'<div>'+r[0]+'</div><div>'+r[1]+'</div>').join('')}
+function setH(el,h){if(el._h!==h){el._h=h;el.innerHTML=h}}   // перебудовувати лише коли змінилось
+function setT(el,t){if(el.textContent!==t)el.textContent=t}
+function kv(el,rows){setH(el,rows.map(r=>'<div>'+r[0]+'</div><div>'+r[1]+'</div>').join(''))}
 function relCards(){const box=$('relCards');if(box.children.length!=S.relays.length){box.innerHTML='';S.relays.forEach((r,i)=>{const c=document.createElement('div');c.className='card';c.innerHTML=`<div class="relhead"><div class="lamp" id="lp${i}">💡</div><div style="flex:1"><b>${r.n}</b><div class="sub">${r.name}</div></div><span class="pill" id="rp${i}"></span></div><div class="seg" id="rs${i}"></div><div class="thr"><input type="range" min="30" max="990" step="2" id="rt${i}" data-k="t${i}"><div class="ldr" id="rl${i}"></div></div><div class="sub" id="ri${i}"></div>`;box.appendChild(c);const rg=$('rt'+i);rg.oninput=()=>{fill(rg);lock['t'+i]=Date.now();$('ri'+i).textContent='Поріг: '+mvOf(rg.value)+' мВ ('+(rg.value/10).toFixed(1)+'%)'};rg.onchange=()=>set('t'+i,rg.value)})}
  S.relays.forEach((r,i)=>{$('lp'+i).classList.toggle('on',r.on);const p=$('rp'+i);p.className='pill '+(r.pend?'wait':r.on?'on':'off');p.textContent=r.pend?'чекає '+r.pend+' с':r.on?'Увімкнено':'Вимкнено';seg($('rs'+i),r.mode,'m'+i);
  const rg=$('rt'+i);if(!(lock['t'+i]&&Date.now()-lock['t'+i]<2500)){rg.value=r.thr;fill(rg);$('ri'+i).textContent='Поріг: '+r.thrMv+' мВ ('+(r.thr/10).toFixed(1)+'%) · зараз '+(r.dark?'темно':'світло')+(r.night?' · нічне вимкнення':'')}
@@ -263,28 +272,29 @@ function relCards(){const box=$('relCards');if(box.children.length!=S.relays.len
 function mvOf(pm){return Math.round(S.ldr.lo+(S.ldr.hi-S.ldr.lo)*pm/1000)}
 function render(){if(!S)return;const s=S;
  if(s.place)$('wxWhere').textContent=s.place;netStatus(s);
+ if(!(lock.wdisp&&Date.now()-lock.wdisp<2500))applyDisp(s.set.wdisp);
  $('hClock').textContent=s.time||'--:--';$('hDate').textContent=s.date||'час ще не відомий';
  $('netDot').className='dot '+(s.wifi.ip?'on':'off');$('hdrNet').lastChild.textContent=s.wifi.ip?s.wifi.ssid:'без Wi-Fi';
  $('offBar').classList.toggle('show',s.sys.allOff);$('allBtn').textContent=s.sys.allOff?'Увімкнути все':'Вимкнути все';$('allBtn').className='btn '+(s.sys.allOff?'':'red');
  const w=s.wx;if(w.ok){$('wxT').textContent=sg(w.t)+'°';$('wxD').textContent=wtxt(w.code)+(w.cache?' (з прогнозу)':'');$('wxI').textContent=emo(w.code,s.isDay);
-  $('wxChips').innerHTML=(w.cache?'':`<span class="chip">🤚 відчувається ${sg(w.feel)}°</span><span class="chip">💧 ${w.hum}%</span><span class="chip">💨 ${Math.round(w.wind)} км/г</span>`)+(s.sun.rise?`<span class="chip">🌅 ${s.sun.rise}</span><span class="chip">🌇 ${s.sun.set}</span>`:'')}else{$('wxT').textContent='--°';$('wxD').textContent=w.busy?'Завантажую…':'Нема даних'}
+  setH($('wxChips'),(w.cache?'':`<span class="chip">🤚 відчувається ${sg(w.feel)}°</span><span class="chip">💧 ${w.hum}%</span><span class="chip">💨 ${Math.round(w.wind)} км/г</span>`)+(s.sun.rise?`<span class="chip">🌅 ${s.sun.rise}</span><span class="chip">🌇 ${s.sun.set}</span>`:''))}else{$('wxT').textContent='--°';$('wxD').textContent=w.busy?'Завантажую…':'Нема даних'}
  $('gridP').className='pill '+(s.grid.on?'on':'off');$('gridP').textContent=s.grid.on?'Є':'Нема';$('gridV').textContent=s.grid.on?'Світло є':'Без світла';
  $('lineV').textContent=s.line>=0?s.line.toFixed(2)+' В':'--';$('lineB').firstChild.style.width=(s.line>0?Math.min(100,s.line/5.2*100):0)+'%';
  s.bat.forEach((b,i)=>{$('b'+i+'n').textContent=b.n;$('b'+i+'p').textContent=b.v>0?b.p+'%':'--';$('b'+i+'v').textContent=b.v>0?b.v.toFixed(2)+' В':'не підключено';const B=$('b'+i+'b');B.className='bar '+batCls(b.p);B.firstChild.style.width=(b.v>0?b.p:0)+'%'});
  $('ldrW').textContent=s.ldr.absent?'Фоторезистор не підключено':s.ldr.word;$('ldrDp').textContent=s.daypart||'—';$('ldrMv').textContent=s.ldr.absent?'—':s.ldr.mv+' мВ · '+s.ldr.pct+'%';$('ldrB').style.width=s.ldr.pct+'%';
- $('relChips').innerHTML=s.relays.map(r=>`<span class="chip"><span class="dot ${r.on?'on':''}"></span>${r.n} · ${MODES[r.mode]}</span>`).join('');
+ setH($('relChips'),s.relays.map(r=>`<span class="chip"><span class="dot ${r.on?'on':''}"></span>${r.n} · ${MODES[r.mode]}</span>`).join(''));
  relCards();
  seg($('ledMode'),s.led.mode,'lmode');$('ledNow').textContent=s.led.on?s.fx[s.led.fx]+' '+s.led.pct+'%':'вимкнено';$('ledNow').className='pill '+(s.led.on?'on':'');
  ['fxN','fxD'].forEach(id=>{const e=$(id);if(!e.options.length)s.fx.forEach((f,i)=>e.add(new Option(f,i)));if(!(lock[e.dataset.k]&&Date.now()-lock[e.dataset.k]<2500))e.value=id=='fxN'?s.led.fxN:s.led.fxD});
  setRange('brN',s.led.brN,pct);setRange('brD',s.led.brD,pct);setRange('s0',s.scr[0],pct);setRange('s0h',s.scr[0],pct);$('wakeBtn').textContent=s.disp.asleep?'Розбудити':'Заставка';setRange('s1',s.scr[1],pct);setRange('s2',s.scr[2],pct);
  setRange('sl',s.set.sleep,sec);setRange('dl',s.set.dly,v=>v+' с');
- [['cal',s.set.cal],['sun',s.set.sun],['nof',s.set.nof],['ap',s.wifi.ap],['lman',s.set.lman]].forEach(([id,v])=>{const e=$(id);if(!(lock[e.dataset.k]&&Date.now()-lock[e.dataset.k]<2500))e.checked=!!v});
+ [['cal',s.set.cal],['sun',s.set.sun],['nof',s.set.nof],['ap',s.wifi.ap],['lman',s.set.lman],['wdisp',s.set.wdisp]].forEach(([id,v])=>{const e=$(id);if(!(lock[e.dataset.k]&&Date.now()-lock[e.dataset.k]<2500))e.checked=!!v});
  if(!(lock.noh&&Date.now()-lock.noh<2500))$('noh').value=s.set.noh;
  [0,1,2].forEach(k=>setRange('lt'+(k+1),s.set.lt[k],volt));$('ltBox').style.opacity=s.set.lman?1:.4;$('ltNow').textContent=s.ldr.absent?'не підключено':(s.ldr.mv/1000).toFixed(2)+' В · '+s.ldr.word;
  $('ldrRange').textContent='шкала '+Math.round(s.ldr.lo)+'–'+Math.round(s.ldr.hi)+' мВ';
- kv($('apKv'),(s.wifi.ap||s.net.apTemp)?[['Назва',s.wifi.apSsid],['Пароль',s.wifi.apPass],['Адреса','http://'+s.wifi.apIp],['Підключено',s.wifi.apClients+' пристр.']]:[['Стан','вимкнено']]);
+ kv($('apKv'),(s.wifi.ap||s.net.apTemp)?[['Назва',esc(s.wifi.apSsid)],['Пароль',esc(s.wifi.apPass)],['Адреса','http://'+s.wifi.apIp],['Підключено',s.wifi.apClients+' пристр.']]:[['Стан','вимкнено']]);
  const up=s.sys.up,d=Math.floor(up/86400),hh=Math.floor(up/3600)%24,mm=Math.floor(up/60)%60;
- kv($('sysKv'),[['Wi-Fi',s.wifi.ip?s.wifi.ssid:'нема'],['IP',s.wifi.ip||'—'],['Сигнал',s.wifi.ip?s.wifi.rssi+' дБм ('+Math.max(0,Math.min(100,2*(s.wifi.rssi+100)))+'%)':'—'],['Веб-меню','http://'+s.wifi.host+'.local'],['Годинник',s.sys.ntp?'NTP, '+(s.sys.ppm>0?'+':'')+s.sys.ppm.toFixed(1)+' ppm':'без NTP'],['Схід / захід',s.sun.rise?s.sun.rise+' / '+s.sun.set:'—'],['Pro Micro',s.sys.proOk?'зв\'язок є'+(s.sys.pro?' · v'+s.sys.pro:''):'нема зв\'язку'],['INA3221',s.sys.ina?'працює':'нема'],['Фоторезистор',s.ldr.absent?'нема':s.ldr.mv+' мВ'],['Вільна пам\'ять',s.sys.heap+' КБ'],['Працює',d+' д '+hh+' год '+mm+' хв'],['Прошивка',s.sys.fw]]);
+ kv($('sysKv'),[['Wi-Fi',s.wifi.ip?esc(s.wifi.ssid):'нема'],['IP',s.wifi.ip||'—'],['Сигнал',s.wifi.ip?s.wifi.rssi+' дБм ('+Math.max(0,Math.min(100,2*(s.wifi.rssi+100)))+'%)':'—'],['Веб-меню','http://'+s.wifi.host+'.local'],['Годинник',s.sys.ntp?'NTP, '+(s.sys.ppm>0?'+':'')+s.sys.ppm.toFixed(1)+' ppm':'без NTP'],['Схід / захід',s.sun.rise?s.sun.rise+' / '+s.sun.set:'—'],['Pro Micro',s.sys.proOk?'зв\'язок є'+(s.sys.pro?' · v'+s.sys.pro:''):'нема зв\'язку'],['INA3221',s.sys.ina?'працює':'нема'],['Фоторезистор',s.ldr.absent?'нема':s.ldr.mv+' мВ'],['Вільна пам\'ять',s.sys.heap+' КБ'],['Працює',d+' д '+hh+' год '+mm+' хв'],['Прошивка',s.sys.fw]]);
 }
 async function poll(){const j=await api('/api/state');if(j){S=j;render()}else{$('netDot').className='dot off';$('hdrNet').lastChild.textContent='нема зв\'язку з ESP32'}}
 async function loadFc(){const j=await api('/api/fc');if(!j||!j.start){$('fcInfo').textContent='Прогнозу ще нема — потрібен інтернет.';return}FC=j;renderFc()}
@@ -292,6 +302,8 @@ function dayData(d){const o={t:[],c:[],p:[],h:[],w:[]};for(let h=0;h<24;h++){con
 function dayCode(o){const cnt={};let wet=0;for(let h=8;h<=20;h++){const c=o.c[h];if(c==null)continue;cnt[c]=(cnt[c]||0)+1;if(c>=51)wet++}let best=null;for(const c in cnt){if(wet>=3&&c<51)continue;if(best==null||cnt[c]>cnt[best])best=c}return +best}
 function renderFc(){const now=Date.now()/1000;let first=Math.max(0,Math.floor((now-FC.start)/86400));const box=$('days');box.innerHTML='';const WD=['Нд','Пн','Вт','Ср','Чт','Пт','Сб'];
  if(selDay<first)selDay=first;
+ const okDay=d=>d<7&&dayData(d).t.some(x=>x!=null);
+ if(!okDay(selDay)){let d=first;while(d<7&&!okDay(d))d++;if(d>=7){$('dTitle').textContent='Прогноз застарів';$('dSun').textContent='';$('dChips').innerHTML='';$('chart').innerHTML='';$('hours').innerHTML='';$('fcInfo').textContent='Прогноз застарів — потрібен інтернет, щоб оновити.';return}selDay=d}
  for(let d=first;d<7;d++){const o=dayData(d),v=o.t.filter(x=>x!=null);if(!v.length)continue;const dt=new Date((FC.start+d*86400+43200)*1000);const el=document.createElement('div');el.className='day'+(d==selDay?' act':'');
   el.innerHTML=`<div class="sub">${d==first?'Сьогодні':WD[dt.getDay()]+' '+dt.getDate()+'.'+String(dt.getMonth()+1).padStart(2,'0')}</div><div class="e">${emo(dayCode(o))}</div><b>${sg(Math.max(...v))}°</b> <span class="sub">${sg(Math.min(...v))}°</span><div class="sub">💧 ${Math.max(...o.p.map(x=>x||0))}%</div>`;el.onclick=()=>{selDay=d;renderFc()};box.appendChild(el)}
  const o=dayData(selDay),dt=new Date((FC.start+selDay*86400+43200)*1000);
@@ -315,34 +327,49 @@ function chart(o){const W=360,H=190,L=30,R=8,T=18,B=30;const v=o.t.filter(x=>x!=
  $('chart').innerHTML=`<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8b5bff" stop-opacity=".55"/><stop offset="1" stop-color="#5b9cff" stop-opacity="0"/></linearGradient><linearGradient id="gl" x1="0" x2="1"><stop offset="0" stop-color="#5b9cff"/><stop offset="1" stop-color="#c084fc"/></linearGradient></defs>${grid}${bars}<path d="${area}" fill="url(#g)"/><path d="${path}" fill="none" stroke="url(#gl)" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>${dots}${lab}${xs}`}
 function openHash(){const b=document.querySelector('nav button[data-t="'+location.hash.slice(1)+'"]');if(b)b.click()}openHash();// ---- трансляція екрана ----
 const cv=$('scr'),cx=cv.getContext('2d'),img=cx.createImageData(128,64);let scrBusy=false,frames=0,fT=Date.now();
-function drawFrame(b,o){const d=img.data;
- for(let p=0;p<8;p++)for(let x=0;x<128;x++){const v=b[o+p*128+x];for(let k=0;k<8;k++){const i=((p*8+k)*128+x)*4,on=v>>k&1;d[i]=on?190:4;d[i+1]=on?228:8;d[i+2]=on?255:14;d[i+3]=255}}
+// Локальна копія екрана: плата шле лише зміни, браузер накладає їх і малює раз на кадр анімації
+const fb=new Uint8Array(1024);let fbDirty=false,rafOn=false;
+function paint(){rafOn=false;if(!fbDirty)return;fbDirty=false;const d=img.data;
+ for(let p=0;p<8;p++)for(let x=0;x<128;x++){const v=fb[p*128+x];for(let k=0;k<8;k++){const i=((p*8+k)*128+x)*4,on=v>>k&1;d[i]=on?190:4;d[i+1]=on?228:8;d[i+2]=on?255:14;d[i+3]=255}}
  cx.putImageData(img,0,0);frames++}
-const homeOn=()=>!document.hidden&&$('t-home').classList.contains('act');
+function needPaint(){fbDirty=true;if(!rafOn){rafOn=true;requestAnimationFrame(paint)}}
+function drawFrame(b,o){fb.set(b.subarray(o,o+1024));needPaint()}
+let dispOn=null;
+function applyDisp(on){dispOn=!!on;$('dispCard').classList.toggle('hide',!dispOn)}
+$('wdisp').addEventListener('change',e=>applyDisp(e.target.checked));
+const homeOn=()=>!document.hidden&&dispOn===true&&$('t-home').classList.contains('act');
 const sleepMs=ms=>new Promise(r=>setTimeout(r,ms));
-function fpsInfo(){if(Date.now()-fT>2000){$('dispInfo').textContent=(S?'екран '+Math.round(S.disp.fps)+' к/с · ':'')+'трансляція '+Math.round(frames*1000/(Date.now()-fT))+' к/с';frames=0;fT=Date.now()}}
-// Потік: одне з'єднання, плата сама шле кадри по 1024 байти (~30 к/с). Якщо браузер не вміє потоки — опитування.
+let lastChange=Date.now();
+function fpsInfo(){if(Date.now()-fT>2000){const f=Math.round(frames*1000/(Date.now()-fT));$('dispInfo').textContent=(S?'екран '+Math.round(S.disp.fps)+' к/с · ':'')+(f?'трансляція '+f+' к/с':'без змін');frames=0;fT=Date.now()}}
+// Потік змін: пакети [смуга][x0][n][дані], кінець кадру [255][0][0]. Нема потоків — опитування цілих кадрів.
 async function scrLoop(){
  for(;;){
   if(!homeOn()){await sleepMs(400);continue}
   const ac=new AbortController();
   try{const r=await fetch('/api/stream',{signal:ac.signal,cache:'no-store'});
-   if(!r.body||!r.body.getReader){await pollFrames();continue}
+   if(r.status===409||!r.body||!r.body.getReader){await pollFrames();continue}   // трансляцію вже дивиться інший пристрій
    const rd=r.body.getReader();let buf=new Uint8Array(4096),len=0;
    for(;;){if(!homeOn()){ac.abort();break}
     const {value,done}=await rd.read();if(done)break;
     if(len+value.length>buf.length){const nb=new Uint8Array(len+value.length+2048);nb.set(buf.subarray(0,len));buf=nb}
     buf.set(value,len);len+=value.length;
-    if(len>=1024){const last=Math.floor(len/1024)*1024-1024;drawFrame(buf,last);buf.copyWithin(0,last+1024,len);len-=last+1024}
-    fpsInfo()}
+    let i=0,bad=false;
+    while(len-i>=3){const pg=buf[i],x0=buf[i+1],n=buf[i+2];
+     if(pg===255){i+=3;needPaint();continue}
+     if(pg>7||n<1||x0+n>128){bad=true;break}
+     if(len-i<3+n)break;
+     fb.set(buf.subarray(i+3,i+3+n),pg*128+x0);i+=3+n}
+    if(bad){ac.abort();break}
+    buf.copyWithin(0,i,len);len-=i;fpsInfo()}
   }catch(e){}
   await sleepMs(600)}}
 async function pollFrames(){while(homeOn()){const t0=performance.now();
  try{const r=await fetch('/api/screen',{cache:'no-store'});const b=new Uint8Array(await r.arrayBuffer());if(b.length==1024)drawFrame(b,0)}catch(e){await sleepMs(800)}
  fpsInfo();await sleepMs(Math.max(0,33-(performance.now()-t0)))}}
-async function key(k){await api('/api/key?k='+k)}
-let wheelT=0;$('oledBox').addEventListener('wheel',e=>{e.preventDefault();const n=Date.now();if(n-wheelT<60)return;wheelT=n;key(e.deltaY>0?'right':'left')},{passive:false});
-document.addEventListener('keydown',e=>{if(!$('t-home').classList.contains('act')||document.activeElement.tagName=='INPUT'||document.activeElement.tagName=='SELECT')return;
+let keyBusy=false,keyNext=null;   // не більше одного запиту в дорозі, решта зливається в один
+async function key(k){if(keyBusy){keyNext=k;return}keyBusy=true;try{await api('/api/key?k='+k)}finally{keyBusy=false;if(keyNext){const n=keyNext;keyNext=null;key(n)}}}
+let wheelT=0;$('oledBox').addEventListener('wheel',e=>{e.preventDefault();if(Math.abs(e.deltaY)<Math.abs(e.deltaX)||!e.deltaY)return;const n=Date.now();if(n-wheelT<90)return;wheelT=n;key(e.deltaY>0?'right':'left')},{passive:false});
+document.addEventListener('keydown',e=>{if(document.querySelector('.modal.show'))return;if(e.repeat&&(e.key=='Enter'||e.key=='Escape'||e.key=='Backspace'))return;if(!homeOn()||document.activeElement.tagName=='INPUT'||document.activeElement.tagName=='SELECT')return;
  const m={ArrowLeft:'left',ArrowRight:'right',Enter:'ok',Escape:'back',Backspace:'back'};if(m[e.key]){e.preventDefault();key(m[e.key])}});
 bindRange('s0h',pct);
 scrLoop();

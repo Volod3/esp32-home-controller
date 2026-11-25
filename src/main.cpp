@@ -164,6 +164,7 @@
 // --- ІЧ-пульт (NEC): повне вимкнення / увімкнення, як кнопка CONF ---
 #define IR_CMD_ALL_ON          0x45     // кнопка "увімкнути все"
 #define IR_CMD_ALL_OFF         0x47     // кнопка "вимкнути все"
+#define IR_ADDR                -1       // адреса свого пульта (видно в Info/веб як "IR,NEC,0x..,"); -1 = будь-яка
 
 
 // =====================================================================
@@ -298,13 +299,14 @@ static float    wxDetT = 0;
 static uint8_t  pwSel = 0, pwAct = 0;      // pwAct: 1 = відлік перезапуску, 2 = глибокого сну
 static float    pwCurX = -1;
 static uint32_t pwActT = 0;
-static char     toastMsg[28] = "";
+static char     toastMsg[64] = "";         // кирилиця — 2 байти на літеру, тож із запасом
 static uint32_t toastT = 0;
 static int8_t   ledPreview = -1;           // правка LED у меню: 0 = показати "День", 1 = "Темно"
 static bool     deepOff = false;           // глибокий сон: усе вимкнено, увімкнути — утримати OK 2 с
 static bool     okHeld = false;
 static uint32_t okDownT = 0;
 static bool     apOn = false;              // власна точка доступу ESP32 (увімкнена користувачем)
+static bool     webDisp = true;            // веб-меню: показувати живий екран і пульт (зберігається)
 static bool     apTemp = false;            // тимчасова точка: мережа не задана або недоступна
 static char     netSsid[33] = WIFI_SSID;   // мережа, до якої підключаємось (вибирається у веб-меню)
 static char     netPass[65] = WIFI_PASS;
@@ -384,6 +386,7 @@ static void fixLightThr(int keep) {
   for (int k = keep + 1; k < 3; k++) if (t[k] < t[k - 1] + 50) t[k] = min(3250, t[k - 1] + 50);   // підсунути сусідів
   for (int k = keep - 1; k >= 0; k--) if (t[k] + 50 > t[k + 1]) t[k] = max(100, t[k + 1] - 50);
   for (int k = 1; k < 3; k++) if (t[k] < t[k - 1] + 50) t[k] = t[k - 1] + 50;                      // на краях діапазону
+  if (t[2] > 3250) { t[2] = 3250; t[1] = min((int)t[1], 3200); t[0] = min((int)t[0], 3150); }
 }
 
 static void loadPrefs() {
@@ -416,6 +419,7 @@ static void loadPrefs() {
   scrBr[2]       = prefs.getUChar("scr2",  DEF_SAVER_OFF_PCT);
   allOff         = prefs.getBool("aoff", false);
   apOn           = prefs.getBool("ap", false);
+  webDisp        = prefs.getBool("wdisp", true);
   if (prefs.isKey("wssid")) {                 // мережа, вибрана у веб-меню, важливіша за вбудовану
     prefs.getString("wssid", netSsid, sizeof(netSsid));
     prefs.getString("wpass", netPass, sizeof(netPass));
@@ -455,6 +459,7 @@ static void saveSettings() {
   prefs.putUShort("dly",  switchDelaySec);
   prefs.putBool("cal", calAuto);
   prefs.putBool("lman", lightManual);
+  prefs.putBool("wdisp", webDisp);
   prefs.putUShort("lt1", lightThr[0]);
   prefs.putUShort("lt2", lightThr[1]);
   prefs.putUShort("lt3", lightThr[2]);
@@ -730,7 +735,9 @@ static void weatherTask(void*) {
       }
     }
     fcApply();                                 // без інтернету — з прогнозу; схід/захід на сьогодні
-    for (int k = 0; k < 10 && !wxForce; k++) vTaskDelay(pdMS_TO_TICKS(200));   // мережу перевіряємо часто; "Оновити" — одразу
+    if (wxForce && WiFi.status() != WL_CONNECTED) wxForce = false;   // без мережі — не крутимось без паузи
+    vTaskDelay(pdMS_TO_TICKS(200));                                     // завжди віддаємо ядро (сторож задач)
+    for (int k = 1; k < 10 && !wxForce; k++) vTaskDelay(pdMS_TO_TICKS(200));   // мережу перевіряємо часто; "Оновити" — одразу
   }
 }
 
@@ -891,7 +898,7 @@ static void updateBattery() {
     if (raw == lastRaw[c]) { if (sameCnt[c] < 65000) sameCnt[c]++; }
     else                   { lastRaw[c] = raw; sameCnt[c] = 0; }
 
-    float v = (raw >> 3) * 0.008f + BAT_OFFS_MV[c] / 1000.0f;
+    float v = max(0, (int)((int16_t)raw >> 3)) * 0.008f + BAT_OFFS_MV[c] / 1000.0f;   // регістр знаковий
     batV[c] = (batV[c] < 0) ? v : batV[c] + (v - batV[c]) * 0.3f;
   }
 
@@ -951,7 +958,7 @@ static float permToMv(uint16_t pm) {
 // Викликається раз на секунду
 static void calibrateLdr() {
   const float ATTACK  = 0.02f;                 // ~50 с: швидко розширюємо діапазон
-  const float RELEASE = 1.0f / (8 * 3600);     // ~8 год: повільно "забуваємо" старе
+  const float RELEASE = 1.0f / (7 * 24 * 3600); // ~тиждень: повільно "забуваємо" старе (за добу шкала не "з'їжджає")
   float v = ldrMv;
   bool wide = (ldrHi - ldrLo) > LDR_MIN_RANGE_MV * 1.5f;
 
@@ -1046,6 +1053,7 @@ static void updateSensors() {
     ldrMv = v;
     ldrFast = v;
     ldrReady = true;
+    if (v < LDR_ABSENT_MV) ldrAbsent = true;      // датчика нема вже на старті — не вмикати реле на ~10 с
     if (ldrHi - ldrLo < 1) ldrLo = ldrHi = v;     // перший запуск
   } else {
     ldrMv += (v - ldrMv) * 0.15f;
@@ -1428,7 +1436,8 @@ static void handleLine(char* s) {
     // формат: IR,NEC,<addr>,<cmd> — команда після третьої коми
     const char* c1 = strchr(p + 3, ',');
     const char* c2 = c1 ? strchr(c1 + 1, ',') : nullptr;
-    if (c2) irCmd = (int)strtoul(c2 + 1, nullptr, 0);
+    // чужі пульти з тими ж кодами ігноруємо, якщо задано IR_ADDR
+    if (c2 && (IR_ADDR < 0 || (long)strtoul(c1 + 1, nullptr, 0) == IR_ADDR)) irCmd = (int)strtoul(c2 + 1, nullptr, 0);
   } else {
     return;
   }
@@ -1760,7 +1769,7 @@ static void drawRelays(int ox) {
   int pct = constrain((int)lroundf((ldrShown - lo) * 100.0f / max(hi - lo, 1.0f)), 0, 100);
   const char* lw = saverLightWord(ok ? &t : nullptr);
   if (!strcmp(lw, "--")) lw = "";
-  char b[48], w[24];
+  char b[64], w[40];
   if (ok && *lw) snprintf(w, sizeof(w), "%s--%s", saverDayPart(t), lw);
   else if (ok)   snprintf(w, sizeof(w), "%s", saverDayPart(t));
   else           snprintf(w, sizeof(w), "%s", lw);
@@ -1897,8 +1906,9 @@ static void saverWeatherIcon(int x, int y, int c, bool day) {
 static void saverSun(const struct tm& t, int& rise, int& set) {
   if (sunDataValid()) { rise = sunRiseMin; set = sunSetMin; return; }
   float half = 6.0f + 2.0f * cosf(2.0f * 3.14159265f * (t.tm_yday - 172) / 365.0f);   // півтривалість дня, год
-  rise = (int)((12.6f - half) * 60.0f);
-  set  = (int)((12.6f + half) * 60.0f);
+  float noon = 12.4f + (t.tm_isdst > 0 ? 1.0f : 0.0f);   // сонячний полудень у Львові ~12:24 зимового часу
+  rise = (int)((noon - half) * 60.0f);
+  set  = (int)((noon + half) * 60.0f);
 }
 
 // Пора доби за годиною і порою року: межі рахуються від сходу/заходу сонця на сьогодні
@@ -2179,24 +2189,34 @@ static const unsigned char mi_info[] U8X8_PROGMEM = {0xe0,0x03,0x18,0x0c,0xc4,0x
 static const unsigned char mi_bars[] U8X8_PROGMEM = {0x00,0x70,0x00,0x50,0x00,0x50,0x00,0x50,0x00,0x57,0x00,0x57,0x00,0x57,0x00,0x57,0x70,0x57,0x70,0x57,0x70,0x57,0x70,0x57,0x77,0x57,0x77,0x57,0x77,0x77,0x00,0x00};
 static const unsigned char mi_light[] U8X8_PROGMEM = {0x04,0x20,0xc8,0x13,0x20,0x04,0x10,0x08,0x95,0xa8,0x90,0x09,0x90,0x08,0x24,0x24,0x42,0x42,0x80,0x00,0xc0,0x03,0x00,0x00,0xc0,0x03,0x00,0x00,0x80,0x01,0x00,0x00};
 static const unsigned char mi_power[] U8X8_PROGMEM = {0x80,0x00,0x80,0x00,0x98,0x0c,0xa4,0x12,0x92,0x24,0x8a,0x28,0x85,0x50,0x05,0x50,0x05,0x50,0x05,0x50,0x05,0x50,0x0a,0x28,0x12,0x24,0xe4,0x13,0x18,0x0c,0xe0,0x03};
-// Рамка-курсор 20x21 (з "тінню" знизу)
-static const unsigned char mi_frame[] U8X8_PROGMEM = {0xfc,0xff,0x03,0x02,0x00,0x04,0x01,0x00,0x08,0x01,0x00,0x08,0x01,0x00,0x08,0x01,0x00,0x08,0x01,0x00,0x08,0x01,0x00,0x08,0x01,0x00,0x08,0x01,0x00,0x08,0x01,0x00,0x08,0x01,0x00,0x08,0x01,0x00,0x08,0x01,0x00,0x08,0x01,0x00,0x08,0x01,0x00,0x08,0x01,0x00,0x08,0x01,0x00,0x08,0x03,0x00,0x0c,0xfe,0xff,0x07,0xfc,0xff,0x03};
 
-struct MenuItem { const unsigned char* bm; uint8_t w, h, x, y; const char* label; uint8_t lx, ly; };
+// Сітка 3x2 з рівними колонками й рядками. ink — ліва межа і ширина реальних пікселів значка,
+// щоб центрувати за малюнком, а не за розміром бітмапа (у Lopaka всі стояли на різній висоті).
+struct MenuItem { const unsigned char* bm; uint8_t w, h, inkX, inkW; const char* label; };
 static const MenuItem MENU[6] = {
-  {mi_gear,  16, 16, 16,  6, "Settings",  9, 31},
-  {mi_info,  15, 16, 56,  7, "Info",     56, 31},
-  {mi_bars,  15, 16, 95,  7, "Wifi",     96, 31},
-  {wx_pcday, 17, 16, 15, 36, "Weather",  11, 61},
-  {mi_light, 16, 16, 56, 37, "Light",    54, 61},
-  {mi_power, 15, 16, 96, 37, "Power",    94, 61},
+  {mi_gear,  16, 16, 0, 16, "Settings"},
+  {mi_info,  15, 16, 0, 15, "Info"},
+  {mi_bars,  15, 16, 0, 15, "Wifi"},
+  {wx_pcday, 17, 16, 0, 17, "Weather"},
+  {mi_light, 16, 16, 0, 16, "Light"},
+  {mi_power, 15, 16, 0, 15, "Power"},
 };
+#define CUR_W 21                                   // рамка-курсор: 21x20 + тінь знизу
+#define CUR_H 20
+static const uint8_t GRID_FX[3] = {11, 53, 96};    // ліві краї колонок (центри 21 / 63 / 106)
+static const uint8_t GRID_FY[2] = {2, 33};         // верх рамок у рядках (підпис — на 28 нижче)
+
+// Рамка-курсор: заокруглена, з "тінню" знизу (як у дизайні)
+static void drawCursorFrame(int x, int y) {
+  oled.drawRFrame(x, y, CUR_W, CUR_H, 3);
+  oled.drawHLine(x + 2, y + CUR_H, CUR_W - 4);
+}
 enum { M_SET = 0, M_INFO, M_WIFI, M_WX, M_LIGHT, M_POWER };
 
 #define FONT_T u8g2_font_4x6_t_cyrillic
 
 
-static void menuCell(int i, int& fx, int& fy) { fx = MENU[i].x + MENU[i].w / 2 - 10; fy = MENU[i].y - 2; }
+static void menuCell(int i, int& fx, int& fy) { fx = GRID_FX[i % 3]; fy = GRID_FY[i / 3]; }
 
 
 // ---- Текст із символом "°" (його нема в кириличних шрифтах — малюємо кільце самі) ----
@@ -2606,6 +2626,17 @@ static void drawList(int n, RowFn fn) {
     oled.setFont(vf); int vw = uW(v) + (ed ? 12 : 0);
     if (lw + vw + 12 > 119) { vf = FONT_T; oled.setFont(vf); vw = uW(v) + (ed ? 12 : 0); }
     if (lw + vw + 12 > 119) { lf = FONT_T; oled.setFont(lf); lw = uW(l); }
+    if (lw + vw + 10 > 119) {                         // і так задовге (напр. назва мережі) — обрізати з ".."
+      oled.setFont(vf);
+      int room = 119 - lw - 10 - (ed ? 12 : 0) - oled.getUTF8Width("..");
+      int n = strlen(v);
+      while (n > 0 && uW(v) > room) {
+        do n--; while (n > 0 && ((uint8_t)v[n] & 0xC0) == 0x80);   // не різати посеред літери
+        v[n] = 0;
+      }
+      strcat(v, "..");
+      vw = uW(v) + (ed ? 12 : 0);
+    }
 
     oled.setDrawColor(2);
     oled.setFont(lf);
@@ -2848,9 +2879,9 @@ static void drawWeather() {
 //  Power
 // =====================================================================
 
-static void drawRestartIcon(int cx, int cy) {
+static void drawRestartIcon(int cx, int cy) {        // коло 3/4 зі стрілкою, 15x15 навколо (cx, cy)
   oled.drawCircle(cx, cy, 6, U8G2_DRAW_UPPER_LEFT | U8G2_DRAW_LOWER_LEFT | U8G2_DRAW_LOWER_RIGHT);
-  oled.drawTriangle(cx, cy - 9, cx, cy - 3, cx + 4, cy - 6);
+  oled.drawTriangle(cx, cy - 9 + 1, cx, cy - 3 - 1, cx + 3, cy - 6);
 }
 
 static void drawSpinner(int cx, int cy, int r) {
@@ -2869,7 +2900,6 @@ static void drawSpinner(int cx, int cy, int r) {
 #define PW_DEEP_MS    2600
 
 static void drawPower() {
-  static const int CX[3] = {20, 62, 107};
   static const char* const L[3] = {"Сон", "Перезапуск", "Глиб. сон"};
   static const char* const D1[3] = {"Все вимкнено, заставка", "Перезавантажити ESP32", "Вимк. все + екран і Wi-Fi"};
   static const char* const D2[3] = {"CONF - увімкнути", "OK - підтвердити", "Утримай OK 2с - увімкн."};
@@ -2891,16 +2921,17 @@ static void drawPower() {
 
   subHeader("Живлення", "");
   oled.setFont(FONT_T);
+  const int FY = 13;                                   // ті самі колонки й рамка, що в сітці меню
   for (int k = 0; k < 3; k++) {
-    int cx = CX[k];
-    if (k == 0)      oled.drawXBMP(cx - 8, 15, 17, 16, wx_moon);
-    else if (k == 1) drawRestartIcon(cx, 24);
-    else             oled.drawXBMP(cx - 7, 16, 15, 16, mi_power);
-    uTC(cx, 43, L[k]);
+    int fx = GRID_FX[k], cx = fx + CUR_W / 2;
+    if (k == 0)      oled.drawXBMP(fx + 2, FY + 2, 17, 16, wx_moon);      // малюнок 13x12 по центру
+    else if (k == 1) drawRestartIcon(cx, FY + 10);
+    else             oled.drawXBMP(fx + 3, FY + 2, 15, 16, mi_power);
+    uTC(cx, FY + 28, L[k]);
   }
-  float tgt = CX[pwSel] - 10;
+  float tgt = GRID_FX[pwSel];
   pwCurX = (pwCurX < 0) ? tgt : approach(pwCurX, tgt, 20);
-  oled.drawXBMP((int)lroundf(pwCurX), 13, 20, 21, mi_frame);
+  drawCursorFrame((int)lroundf(pwCurX), FY);
   oled.drawHLine(0, 47, 128);
   uTC(64, 55, D1[pwSel]);
   uTC(64, 63, D2[pwSel]);
@@ -2943,16 +2974,20 @@ static void drawGrid(int ox) {
   oled.setFont(u8g2_font_4x6_tr);
   for (int i = 0; i < 6; i++) {
     const MenuItem& m = MENU[i];
-    oled.drawXBMP(ox + m.x, m.y, m.w, m.h, m.bm);
-    oled.drawStr(ox + m.lx, m.ly, m.label);
+    int fx, fy;
+    menuCell(i, fx, fy);
+    int ix = fx + CUR_W / 2 - (2 * m.inkX + m.inkW) / 2;  // центр малюнка = центр рамки
+    oled.drawXBMP(ox + ix, fy + 2, m.w, m.h, m.bm);
+    int lw = oled.getStrWidth(m.label);
+    oled.drawStr(ox + fx + CUR_W / 2 - lw / 2, fy + 28, m.label);
   }
   // рамка: рівень 0 — краї екрана, рівень 1 — навколо пункту; між ними плавно стискається/розтягується
   float tg[4] = {0, 0, 128, 64};
-  if (menuLevel >= 1) { int fx, fy; menuCell(menuSel, fx, fy); tg[0] = fx; tg[1] = fy; tg[2] = 20; tg[3] = 21; }
+  if (menuLevel >= 1) { int fx, fy; menuCell(menuSel, fx, fy); tg[0] = fx; tg[1] = fy; tg[2] = CUR_W; tg[3] = CUR_H; }
   for (int k = 0; k < 4; k++) menuR[k] = approach(menuR[k], tg[k], 18);
   int rx = ox + (int)lroundf(menuR[0]), ry = (int)lroundf(menuR[1]);
-  if (menuLevel >= 1 && fabsf(menuR[2] - 20) < 0.6f && fabsf(menuR[3] - 21) < 0.6f)
-    oled.drawXBMP(rx, ry, 20, 21, mi_frame);
+  if (menuLevel >= 1 && fabsf(menuR[2] - CUR_W) < 0.6f && fabsf(menuR[3] - CUR_H) < 0.6f)
+    drawCursorFrame(rx, ry);
   else if (menuLevel == 0 && menuR[2] > 127.4f)
     oled.drawFrame(ox, 0, 128, 64);
   else
@@ -2970,7 +3005,7 @@ static void drawMenu(int ox) {
   int fx, fy;
   menuCell(menuSel, fx, fy);
   int x0 = (int)lroundf(fx * (1 - e)), y0 = (int)lroundf(fy * (1 - e));
-  int x1 = (int)lroundf((fx + 19) * (1 - e) + 127 * e), y1 = (int)lroundf((fy + 20) * (1 - e) + 63 * e);
+  int x1 = (int)lroundf((fx + CUR_W - 1) * (1 - e) + 127 * e), y1 = (int)lroundf((fy + CUR_H - 1) * (1 - e) + 63 * e);
   drawGrid(0);
   oled.setDrawColor(0);
   oled.drawBox(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
@@ -3108,9 +3143,7 @@ static void menuBack() {
 // ---- Глибокий сон: усе вимкнено (реле, стрічка, екран, Wi-Fi). Увімкнути — утримати OK 2 с ----
 static void enterDeep() {
   pwAct = 0;
-  menuReset();
-  relLevel = 0;
-  editing = false;
+  cancelEdit();                                     // незбережений поріг реле теж зберегти
   page = fromPage = P_MAIN;
   transT = 1.0f;
   deepOff = true;
@@ -3277,8 +3310,8 @@ static void webState() {
   for (int i = 0; i < FX_COUNT; i++) jf(s, "%s\"%s\"", i ? "," : "", FX_NAMES[i]);
   s += "],";
   jf(s, "\"scr\":[%d,%d,%d],", scrBr[0], scrBr[1], scrBr[2]);
-  jf(s, "\"set\":{\"sleep\":%d,\"dly\":%d,\"cal\":%d,\"sun\":%d,\"nof\":%d,\"noh\":%d,\"lman\":%d,\"lt\":[%d,%d,%d]},",
-     sleepSec, switchDelaySec, calAuto, sunGate, nightOff, nightHour, lightManual, lightThr[0], lightThr[1], lightThr[2]);
+  jf(s, "\"set\":{\"sleep\":%d,\"dly\":%d,\"cal\":%d,\"sun\":%d,\"nof\":%d,\"noh\":%d,\"lman\":%d,\"lt\":[%d,%d,%d],\"wdisp\":%d},",
+     sleepSec, switchDelaySec, calAuto, sunGate, nightOff, nightHour, lightManual, lightThr[0], lightThr[1], lightThr[2], webDisp);
   if (sunDataValid()) jf(s, "\"sun\":{\"rise\":\"%02d:%02d\",\"set\":\"%02d:%02d\"},", sunRiseMin / 60, sunRiseMin % 60, sunSetMin / 60, sunSetMin % 60);
   else                s += "\"sun\":{\"rise\":\"\",\"set\":\"\"},";
   bool wv = wxValid();
@@ -3357,6 +3390,7 @@ static void webSet() {
   else if (k == "dly")   switchDelaySec = constrain(v, 1, 120);
   else if (k == "cal")   calAuto = v != 0;
   else if (k == "lman")  lightManual = v != 0;
+  else if (k == "wdisp") { webDisp = v != 0; if (!webDisp) streamStop(); }
   else if (k == "lt1" || k == "lt2" || k == "lt3") { int i = k[2] - '1'; lightThr[i] = constrain(v, 100, 3250); fixLightThr(i); }
   else if (k == "sun")   sunGate = v != 0;
   else if (k == "nof")   nightOff = v != 0;
@@ -3378,7 +3412,7 @@ static void webSet() {
 
 static void webAct() {
   String a = web.arg("a");
-  if      (a == "wx")       wxForce = true;
+  if      (a == "wx")       { if (WiFi.status() != WL_CONNECTED) { web.send(200, "application/json", "{\"ok\":false,\"err\":\"nowifi\"}"); return; } wxForce = true; }
   else if (a == "calreset") { ldrLo = ldrHi = ldrMv; saveCalib(); }
   else if (a == "alloff" || a == "sleep") setAllOff(true);
   else if (a == "allon")    setAllOff(false);
@@ -3409,6 +3443,7 @@ static String trimAll(String v) {
 static void webScan() {
   if (web.hasArg("start")) {
     WiFi.scanDelete();
+    if (WiFi.status() != WL_CONNECTED) WiFi.disconnect(false);   // поки йде спроба підключення, пошук не стартує
     WiFi.scanNetworks(true, false);
     web.send(200, "application/json", "{\"busy\":true}");
     return;
@@ -3461,12 +3496,14 @@ static void webWifi() {
     snprintf(netSsid, sizeof(netSsid), "%s", WIFI_SSID);
     snprintf(netPass, sizeof(netPass), "%s", WIFI_PASS);
   } else {
-    String ss = trimAll(web.arg("ssid"));
+    String ss = web.hasArg("raw") ? web.arg("ssid") : trimAll(web.arg("ssid"));   // зі списку — точно як є
     String pw = trimAll(web.arg("pass"));
     if (ss.length() == 0)  return err("Вкажи назву мережі");
     if (ss.length() > 32)  return err("Назва задовга (макс. 32 байти)");
     if (pw.length() > 0 && pw.length() < 8) return err("Пароль закороткий: мінімум 8 символів");
-    if (pw.length() > 63)  return err("Пароль задовгий (макс. 63 символи)");
+    bool hex64 = pw.length() == 64;
+    for (unsigned i = 0; hex64 && i < 64; i++) hex64 = isxdigit((unsigned char)pw[i]);
+    if (pw.length() > 63 && !hex64) return err("Пароль задовгий (макс. 63 символи)");
     snprintf(netSsid, sizeof(netSsid), "%s", ss.c_str());
     snprintf(netPass, sizeof(netPass), "%s", pw.c_str());
     prefs.begin("ctl", false);
@@ -3492,37 +3529,76 @@ static void webScreen() {
 // Пишемо неблокуюче (MSG_DONTWAIT): завислий браузер не зупиняє loop().
 static WiFiClient streamCl;
 static bool       streamOn = false;
-static uint8_t    streamBuf[1024];
-static int        streamOff = 1024;
-static uint32_t   streamT = 0, streamProg = 0;
-#define STREAM_MS 31
+// Потік змін екрана (а не цілих кадрів). Пакет: [смуга 0..7][x0][n][n байт стовпців];
+// кінець кадру — [0xFF][0][0]. Нерухомий екран не шле нічого, крім "я жива" раз на секунду.
+static uint8_t    streamLast[1024];              // що вже має браузер
+static uint8_t    streamBuf[8 * (3 + 128) + 3];
+static int        streamLen = 0, streamOff = 0;
+static bool       streamFull = true;             // наступний кадр — повністю (новий глядач)
+static uint32_t   streamT = 0, streamProg = 0, streamSentT = 0;
+#define STREAM_MS 20                              // кожен кадр екрана (до 40 к/с)
 
-static void streamStop() { if (streamOn) streamCl.stop(); streamOn = false; streamOff = 1024; }
+static void streamStop() { if (streamOn) streamCl.stop(); streamOn = false; streamLen = streamOff = 0; }
 
 static void webStream() {
-  streamStop();                                       // один глядач за раз — новий замінює старого
+  if (streamOn && streamCl.connected() && millis() - streamProg < 2000) {   // вже дивиться інший — він не "вилітає"
+    web.send(409, "text/plain", "busy");              // другий отримає кадри опитуванням
+    return;
+  }
+  streamStop();
   WiFiClient c = web.client();
   c.setNoDelay(true);
   c.print("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-store\r\n"
           "Access-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n");
   streamCl = c;                                       // копія тримає сокет відкритим після обробника
   streamOn = true;
-  streamOff = 1024;
+  streamFull = true;
+  streamLen = streamOff = 0;
   streamT = 0;
-  streamProg = millis();
+  streamProg = streamSentT = millis();
+}
+
+// Зібрати пакет змін від минулого надісланого кадру. 0 — нічого слати
+static int streamBuild(uint32_t now) {
+  int n = 0;
+  for (int pg = 0; pg < 8; pg++) {
+    const uint8_t* src = scrShot + pg * 128;
+    uint8_t* old = streamLast + pg * 128;
+    int x0 = 0, x1 = 127;
+    if (!streamFull) {
+      while (x0 < 128 && src[x0] == old[x0]) x0++;
+      if (x0 == 128) continue;
+      while (x1 > x0 && src[x1] == old[x1]) x1--;
+    }
+    int len = x1 - x0 + 1;
+    streamBuf[n++] = pg;
+    streamBuf[n++] = x0;
+    streamBuf[n++] = len;
+    memcpy(streamBuf + n, src + x0, len);
+    memcpy(old + x0, src + x0, len);
+    n += len;
+  }
+  streamFull = false;
+  if (n == 0 && now - streamSentT < 1000) return 0;   // без змін — мовчимо (але раз на секунду "я жива")
+  streamBuf[n++] = 0xFF;
+  streamBuf[n++] = 0;
+  streamBuf[n++] = 0;
+  streamSentT = now;
+  return n;
 }
 
 static void streamTick() {
   if (!streamOn) return;
   uint32_t now = millis();
   if (!streamCl.connected() || now - streamProg > 5000) { streamStop(); return; }   // закрили або завис
-  if (streamOff >= 1024) {
+  if (streamOff >= streamLen) {
     if (now - streamT < STREAM_MS) return;
     streamT = now;
-    memcpy(streamBuf, scrShot, sizeof(streamBuf));
+    streamLen = streamBuild(now);
     streamOff = 0;
+    if (!streamLen) { streamProg = now; return; }
   }
-  int n = send(streamCl.fd(), streamBuf + streamOff, 1024 - streamOff, MSG_DONTWAIT);
+  int n = send(streamCl.fd(), streamBuf + streamOff, streamLen - streamOff, MSG_DONTWAIT);
   if (n > 0) { streamOff += n; streamProg = now; }
   else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) streamStop();
 }
@@ -3537,7 +3613,7 @@ static void webKey() {
   else if (k == "ok")    { feed("BTN,OK,1");   feed("BTN,OK,0"); }
   else if (k == "back")  { feed("BTN,BACK,1"); feed("BTN,BACK,0"); }
   else if (k == "conf")  { feed("BTN,CONF,1"); feed("BTN,CONF,0"); }
-  else if (k == "wake")  { if (!allOff) wake(); }
+  else if (k == "wake")  { if (allOff) setAllOff(false); else wake(); }
   else if (k == "sleep") { if (!asleep) sleepNow(); }
   else { web.send(400, "application/json", "{\"err\":\"key\"}"); return; }
   dirty = true;
@@ -3715,6 +3791,9 @@ void setup() {
 
   inaDetect();
 
+  setenv("TZ", TZ_INFO, 1);                  // місцевий час одразу (після перезапуску годинник іде, а Wi-Fi може не бути)
+  tzset();
+  WiFi.setHostname(OTA_HOST);                // ім'я для роутера — до WiFi.mode()
   apTemp = !netSsid[0];                      // мережа не задана — одразу точка доступу для налаштування
   WiFi.mode(apActive() ? WIFI_AP_STA : WIFI_STA);
   if (apActive()) WiFi.softAP(AP_SSID, AP_PASS);
@@ -3751,16 +3830,22 @@ void loop() {
 
   // Мережа: OTA і NTP стартують, коли з'явився Wi-Fi
   static bool netInit = false;
-  if (WiFi.status() == WL_CONNECTED) {
+  bool staUp = WiFi.status() == WL_CONNECTED;
+  if (!netInit && !deepOff && !staUp && apActive() && WiFi.softAPgetStationNum() > 0) {
+    initOta();                                 // прошивка і через власну точку доступу (192.168.4.1)
+    MDNS.addService("http", "tcp", 80);
+    netInit = true;
+  }
+  if (netInit && !deepOff) ArduinoOTA.handle();
+  static bool ntpInit = false;
+  if (staUp) {
+    if (!ntpInit) { sntp_set_time_sync_notification_cb(onTimeSync); configTzTime(TZ_INFO, NTP_SERVER, "time.google.com", "time.cloudflare.com"); ntpInit = true; }
     if (!netInit) {
       Serial.printf("[WiFi] підключено, IP %s\n", WiFi.localIP().toString().c_str());
       initOta();
       MDNS.addService("http", "tcp", 80);
-      sntp_set_time_sync_notification_cb(onTimeSync);
-      configTzTime(TZ_INFO, NTP_SERVER, "time.google.com", "time.cloudflare.com");
       netInit = true;
     }
-    ArduinoOTA.handle();
   }
 
   // Повторне підключення до Wi-Fi
