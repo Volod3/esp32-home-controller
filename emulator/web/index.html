@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="uk"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Емулятор контролера</title>
+<style>
+:root{--bg:#0b0f17;--card:#131a26;--card2:#18202f;--line:#243044;--tx:#e8eef8;--mut:#8a97ad;--acc:#5b9cff;--acc2:#8b5bff;--ok:#36d399}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+body{padding:22px;min-height:100vh}
+body:before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(1000px 500px at 85% -10%,#1b2b55 0,transparent 60%),radial-gradient(800px 500px at -10% 10%,#2a1b4d 0,transparent 55%)}
+.wrap{max-width:1240px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px}
+@media(max-width:980px){.wrap{grid-template-columns:1fr}}
+h1{font-size:18px;margin:0 0 4px;display:flex;gap:10px;align-items:center}
+h1 i{width:30px;height:30px;border-radius:10px;background:linear-gradient(135deg,var(--acc),var(--acc2));display:grid;place-items:center;font-style:normal;font-size:16px}
+.sub{color:var(--mut);font-size:12.5px}
+.card{background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--line);border-radius:18px;padding:16px}
+.oled{position:relative;margin-top:14px;background:#02040a;border-radius:16px;padding:18px;border:1px solid #1d2636;box-shadow:inset 0 0 40px #000,0 18px 50px #0008;user-select:none;cursor:pointer}
+.oled canvas{display:block;width:100%;aspect-ratio:2/1;image-rendering:pixelated;image-rendering:crisp-edges}
+.oled .grid{position:absolute;inset:18px;pointer-events:none;background-image:linear-gradient(#000a 1px,transparent 1px),linear-gradient(90deg,#000a 1px,transparent 1px);background-size:calc(100%/128) calc(100%/64)}
+.oled .badge{position:absolute;top:8px;right:14px;font:700 10px system-ui;letter-spacing:1px;color:var(--mut)}
+.oled.flash{box-shadow:inset 0 0 40px #000,0 0 0 2px #5b9cff66,0 18px 50px #0008}
+.hint{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.hint span{background:#ffffff0c;border:1px solid var(--line);border-radius:99px;padding:4px 10px;font-size:12px;color:var(--mut)}
+.hint b{color:var(--tx);font-weight:600}
+.pad{display:grid;grid-template-columns:1fr 1.3fr 1fr .9fr .9fr;gap:8px;margin-top:14px}
+.pad button{border:1px solid var(--line);background:#ffffff0c;color:var(--tx);border-radius:14px;padding:13px 6px;font:700 14px system-ui;cursor:pointer;transition:transform .08s,background .15s;user-select:none}
+.pad button:active,.pad button.down{transform:scale(.95);background:#5b9cff33}
+.pad .ok{background:linear-gradient(135deg,var(--acc),var(--acc2));border:0;color:#fff}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:1.2px;color:var(--mut);margin:4px 0 10px}
+.row{padding:9px 0;border-top:1px solid var(--line)}.row:first-of-type{border-top:0}
+.row .top{display:flex;justify-content:space-between;font-weight:600}.row .top span{color:var(--mut);font-weight:500;font-variant-numeric:tabular-nums}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:24px;background:none;margin:4px 0 0}
+input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:99px;background:linear-gradient(90deg,var(--acc) var(--p,50%),#ffffff18 var(--p,50%))}
+input[type=range]::-moz-range-track{height:6px;border-radius:99px;background:linear-gradient(90deg,var(--acc) var(--p,50%),#ffffff18 var(--p,50%))}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:#fff;margin-top:-6px;box-shadow:0 0 0 4px #5b9cff44}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radius:50%;background:#fff}
+.sw{display:flex;justify-content:space-between;align-items:center;font-weight:600;cursor:pointer}
+.sw input{display:none}.sw i{width:42px;height:24px;border-radius:99px;background:#ffffff1c;position:relative;transition:.2s}
+.sw i:after{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.2s}
+.sw input:checked+i{background:linear-gradient(135deg,var(--acc),var(--acc2))}.sw input:checked+i:after{transform:translateX(18px)}
+.rel{display:flex;align-items:center;gap:10px;padding:7px 0}
+.lamp{width:12px;height:12px;border-radius:50%;background:#333;flex:none;transition:.25s}
+.lamp.on{background:#ffc94d;box-shadow:0 0 10px #ffc94d}
+.led{height:16px;border-radius:8px;background:#222;border:1px solid var(--line);transition:background .2s}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px}.kv div:nth-child(odd){color:var(--mut)}.kv div:nth-child(even){text-align:right;font-variant-numeric:tabular-nums}
+.off{color:#f87272!important}
+</style></head><body>
+<div class="wrap">
+ <div>
+  <h1><i>⚡</i>Емулятор контролера</h1>
+  <div class="sub">Справжня прошивка (src/main.cpp), зібрана для ПК. Усі екрани, меню, анімації й налаштування — як на платі.</div>
+  <div class="oled" id="oled"><canvas id="cv" width="128" height="64"></canvas><div class="grid"></div><div class="badge" id="fps">—</div></div>
+  <div class="hint"><span><b>Коліщатко</b> — крутилка</span><span><b>Ліва</b> — OK (утримати 2 с — з глибокого сну)</span><span><b>Права</b> — BACK</span><span><b>Середня</b> — CONF</span><span><b>← →</b>, <b>Enter</b>, <b>Esc</b>, <b>Пробіл</b></span></div>
+  <div class="pad">
+   <button data-step="left">⟲ Ліво</button><button class="ok" data-key="ok">OK</button><button data-step="right">Право ⟳</button>
+   <button data-key="back">BACK</button><button data-key="conf">CONF</button>
+  </div>
+ </div>
+ <div>
+  <div class="card"><h2>Датчики</h2>
+   <div class="row"><div class="top">Фоторезистор<span id="ldrV"></span></div><input type="range" id="ldr" min="0" max="3300" step="10" value="1800"></div>
+   <div class="row"><label class="sw">Світло в домі<input type="checkbox" id="grid" checked><i></i></label></div>
+   <div class="row"><div class="top">РЕЗ.АКУМ<span id="bat1V"></span></div><input type="range" id="bat1" min="2.8" max="4.3" step="0.01" value="4.10"></div>
+   <div class="row"><div class="top">ОСН.АКУМ<span id="bat2V"></span></div><input type="range" id="bat2" min="2.8" max="4.3" step="0.01" value="3.95"></div>
+   <div class="row"><div class="top">Лінія 5V<span id="lineV"></span></div><input type="range" id="line" min="0" max="5.5" step="0.01" value="5.05"></div>
+   <div class="row"><label class="sw">Wi-Fi підключено<input type="checkbox" id="wifi" checked><i></i></label></div>
+  </div>
+  <div class="card" style="margin-top:14px"><h2>Стан</h2>
+   <div id="rels"></div>
+   <div class="rel" style="margin-top:4px"><span style="flex:1;font-weight:600">LED-стрічка</span><div class="led" id="led" style="width:110px"></div></div>
+   <div class="kv" id="kv" style="margin-top:10px"></div>
+   <div class="sub" style="margin-top:10px">Погода тестова — в емуляторі нема інтернету. Налаштування зберігаються в emulator/emu_prefs.txt.</div>
+  </div>
+ </div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const cv=$('cv'),cx=cv.getContext('2d'),img=cx.createImageData(128,64);
+let last=null,frames=0,fT=performance.now(),busy=false;
+// ---- кадр: 1024 байти (8 смуг x 128 стовпців, біт 0 — верхній піксель) + контраст + "екран вимкнено"
+async function frameLoop(){
+ if(!busy){busy=true;
+  try{const b=new Uint8Array(await (await fetch('/frame',{cache:'no-store'})).arrayBuffer());
+   if(b.length>=1026){let same=last&&last.length===b.length;if(same)for(let i=0;i<b.length;i++)if(b[i]!==last[i]){same=false;break}
+    if(!same){last=b;const k=.35+.65*b[1024]/255,off=b[1025],d=img.data,R=175*k|0,G=220*k|0,B=255*k|0;
+     for(let p=0;p<8;p++)for(let x=0;x<128;x++){const v=off?0:b[p*128+x];for(let j=0;j<8;j++){const i=((p*8+j)*128+x)*4,on=v>>j&1;d[i]=on?R:6;d[i+1]=on?G:8;d[i+2]=on?B:12;d[i+3]=255}}
+     cx.putImageData(img,0,0);frames++}}
+  }catch(e){}
+  busy=false}
+ requestAnimationFrame(frameLoop)}
+requestAnimationFrame(frameLoop);
+
+// ---- введення
+const send=(k,d=1)=>fetch('/key?k='+k+'&d='+d).catch(()=>{});
+const step=d=>{send(d);const o=$('oled');o.classList.add('flash');clearTimeout(o._t);o._t=setTimeout(()=>o.classList.remove('flash'),90)};
+const held=new Set();
+function press(k){if(held.has(k))return;held.add(k);send(k,1);document.querySelector(`[data-key="${k}"]`)?.classList.add('down')}
+function release(k){if(!held.has(k))return;held.delete(k);send(k,0);document.querySelector(`[data-key="${k}"]`)?.classList.remove('down')}
+const BTN={0:'ok',1:'conf',2:'back'};
+const oled=$('oled');
+oled.addEventListener('mousedown',e=>{e.preventDefault();BTN[e.button]&&press(BTN[e.button])});
+addEventListener('mouseup',e=>{BTN[e.button]&&release(BTN[e.button])});
+oled.addEventListener('contextmenu',e=>e.preventDefault());
+oled.addEventListener('auxclick',e=>e.preventDefault());
+// коліщатко: один "клац" = один крок; тачпад накопичує дельту
+let acc=0;
+oled.addEventListener('wheel',e=>{e.preventDefault();const d=e.deltaMode===1?e.deltaY*33:e.deltaY;acc+=d;
+ const th=Math.abs(d)>=50?1:40;while(Math.abs(acc)>=th){const s=acc>0?1:-1;acc-=s*th;if(th===1){acc=0}step(s>0?'right':'left');if(th===1)break}},{passive:false});
+document.querySelectorAll('[data-step]').forEach(b=>b.onclick=()=>step(b.dataset.step));
+document.querySelectorAll('[data-key]').forEach(b=>{const k=b.dataset.key;
+ b.addEventListener('mousedown',e=>{e.preventDefault();press(k)});b.addEventListener('mouseup',()=>release(k));b.addEventListener('mouseleave',()=>release(k));
+ b.addEventListener('touchstart',e=>{e.preventDefault();press(k)},{passive:false});b.addEventListener('touchend',()=>release(k))});
+const KEYS={Enter:'ok',Escape:'back',Backspace:'back',' ':'conf'};
+addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;
+ if(e.key==='ArrowLeft'||e.key==='ArrowUp'){e.preventDefault();step('left');return}
+ if(e.key==='ArrowRight'||e.key==='ArrowDown'){e.preventDefault();step('right');return}
+ if(KEYS[e.key]){e.preventDefault();if(!e.repeat)press(KEYS[e.key])}});
+addEventListener('keyup',e=>{if(KEYS[e.key])release(KEYS[e.key])});
+addEventListener('blur',()=>[...held].forEach(release));
+
+// ---- датчики
+const FMT={ldr:v=>Math.round(v)+' мВ',bat1:v=>(+v).toFixed(2)+' В',bat2:v=>(+v).toFixed(2)+' В',line:v=>(+v).toFixed(2)+' В'};
+function fill(r){r.style.setProperty('--p',((r.value-r.min)/(r.max-r.min)*100)+'%')}
+Object.keys(FMT).forEach(id=>{const r=$(id),apply=()=>{fill(r);$(id+'V').textContent=FMT[id](r.value);fetch('/set?n='+id+'&v='+r.value)};r.addEventListener('input',apply);apply()});
+['grid','wifi'].forEach(id=>{const c=$(id),apply=()=>fetch('/set?n='+id+'&v='+(c.checked?1:0));c.addEventListener('change',apply);apply()});
+
+// ---- стан
+const MODES=['Авто','Вимк','Увімк'];
+async function stateLoop(){
+ try{const d=await (await fetch('/state',{cache:'no-store'})).json();
+  if(d.relays)$('rels').innerHTML=d.relays.map(r=>`<div class="rel"><div class="lamp ${r.on?'on':''}"></div><b style="width:40px">${r.n}</b><span class="sub" style="flex:1">${r.on?'увімк':'вимк'} · ${MODES[r.mode]} · поріг ${r.thrMv} мВ${r.pend?' · чекає '+r.pend+' с':''}</span></div>`).join('');
+  if(d.disp)$('fps').textContent=Math.round(d.disp.fps)+' к/с'+(d.disp.asleep?' · заставка':'');
+  const l=d.led_rgb||[0,0,0,0],m=Math.max(l[0],l[1],l[2],1);$('led').style.background=l[3]?`rgb(${l[0]*255/m|0},${l[1]*255/m|0},${l[2]*255/m|0})`:'#222';
+  if(d.ldr)$('kv').innerHTML=[['Час',d.time||'--'],['Пора доби',d.daypart||'—'],['Освітленість',d.ldr.word+' · '+d.ldr.pct+'%'],['Екран',(d.disp?Math.round(d.disp.fps)+' к/с':'')+(d.disp&&d.disp.asleep?' · заставка':'')],['Режим',d.sys&&d.sys.allOff?'<span class="off">усе вимкнено</span>':'працює']].map(r=>`<div>${r[0]}</div><div>${r[1]}</div>`).join('');
+ }catch(e){}
+ setTimeout(stateLoop,250)}
+stateLoop();
+</script></body></html>

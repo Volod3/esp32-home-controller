@@ -3707,13 +3707,12 @@ static void initOta() {
 // Самовідновлення: кілька коротких команд орієнтації/режиму (лише ті, від яких SH1106 не блимає).
 // Якщо збій на шині зіпсував команду і екран перевернувся чи інвертувався — за 2 с усе повертається.
 static void oledRefreshCfg() {
+  // Лише орієнтація/зсув/режим. 0xAF ("увімкнути") і контраст НЕ шлемо: 0xAF перезапускає
+  // вбудований перетворювач SH1106, і яскравість щоразу плавно "дихала".
   static const uint8_t CFG[] = {0x00, 0xA1, 0xC8, 0xD3, 0x00, 0x40, 0xA4, 0xA6};
   Wire.setClock(OLED_I2C_HZ);
   Wire.beginTransmission(0x3C);
   Wire.write(CFG, sizeof(CFG));
-  Wire.write(0x81);
-  Wire.write(oledContrast);
-  Wire.write(0xAF);
   if (Wire.endTransmission() != 0) oledCacheOk = false;   // збій — наступний кадр повністю
 }
 
