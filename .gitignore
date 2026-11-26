@@ -6,3 +6,8 @@ promicro/.vscode/
 # особисті дані: паролі Wi-Fi/OTA, координати
 include/secrets.h
 secrets.ini
+
+# емулятор
+emulator/build/
+emulator/emu_prefs.txt
+__pycache__/

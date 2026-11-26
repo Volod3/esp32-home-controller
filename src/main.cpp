@@ -84,14 +84,14 @@
 #define RELAY_OPEN_DRAIN       0
 
 // --- Батареї (INA3221). Який канал мікросхеми (1, 2 або 3) на якій АКБ — міняй тут ---
-#define BAT1_INA_CH            2
-#define BAT2_INA_CH            3
+#define BAT1_INA_CH            3      // резервний (верхній на головному)
+#define BAT2_INA_CH            2      // основний
 #define LINE_INA_CH            1      // канал з лінією 5V
 #define BAT1_LABEL             "РЕЗ.АКУМ"   // верхня на головному екрані
 #define BAT2_LABEL             "ОСН.АКУМ"   // нижня
 // Поправка напруги, мВ (додається до показу кожного каналу окремо; можна й від'ємну)
-#define BAT1_OFFSET_MV         110
-#define BAT2_OFFSET_MV         10
+#define BAT1_OFFSET_MV         10       // поправки пересунуті разом із каналами (належать до свого каналу)
+#define BAT2_OFFSET_MV         110
 #define LINE_OFFSET_MV         0        // поправка для лінії 5V
 #define BAT_MIN_V              2.0f     // нижче = АКБ не підключена, показуємо "--"
 
@@ -153,7 +153,8 @@
 
 #define DEFAULT_SLEEP_SEC      15
 #define TRANS_MS               340      // тривалість анімації переходу між екранами
-#define OLED_I2C_HZ            800000   // шина під час передачі кадру (для 60 к/с — 1000000). Якщо екран "сміттить" — 400000
+#define OLED_I2C_HZ            800000   // шина під час передачі кадру. Якщо екран "сміттить" — 400000 (тоді переходи повільніші)
+#define OLED_CFG_REFRESH_MS    2000     // раз на 2 с повторно задати орієнтацію екрана (самовідновлення, якщо збій шини його "перевернув")
 #define FRAME_MS               25       // період кадрів: 25 мс = 40 к/с (16 = ~60 к/с)
 #define DEBUG_LINK             DEBUG_MODE
 
@@ -318,6 +319,7 @@ static uint32_t webMaxUs = 0, webSumUs = 0, drawSumUs = 0;
 static uint32_t dbgWebMs = 0, dbgWebMax = 0, dbgDrawMs = 0;   // діагностика: час веб-сервера і малювання за секунду
 static uint8_t  oledLast[1024];            // що вже є на екрані (передаємо лише зміни)
 static bool     oledCacheOk = false;
+static uint8_t  oledContrast = 255;
 
 // Плавні значення для малювання
 static float frameDt  = 0.016f;
@@ -899,6 +901,15 @@ static void updateBattery() {
     else                   { lastRaw[c] = raw; sameCnt[c] = 0; }
 
     float v = max(0, (int)((int16_t)raw >> 3)) * 0.008f + BAT_OFFS_MV[c] / 1000.0f;   // регістр знаковий
+    // одиничний викид (збій шини, завада) не показуємо: різкий стрибок приймаємо, лише коли повторився
+    static float spike[3] = {-1, -1, -1};
+    if (batV[c] >= 0 && fabsf(v - batV[c]) > 0.4f) {
+      bool again = spike[c] >= 0 && fabsf(v - spike[c]) < 0.15f;
+      spike[c] = v;
+      if (again) batV[c] = v;                              // справжня зміна (підключили/відключили АКБ)
+      continue;
+    }
+    spike[c] = -1;
     batV[c] = (batV[c] < 0) ? v : batV[c] + (v - batV[c]) * 0.3f;
   }
 
@@ -1273,7 +1284,8 @@ static void applyContrast() {
   uint8_t p;
   if (!asleep) p = scrBr[0];
   else         p = allOff ? scrBr[2] : scrBr[1];
-  oled.setContrast((uint8_t)((uint16_t)p * 255 / 100));
+  oledContrast = (uint8_t)((uint16_t)p * 255 / 100);
+  oled.setContrast(oledContrast);
 }
 
 static void beginEdit() { editing = true; relLevel = 2; }
@@ -2475,7 +2487,7 @@ static void actWifi(int i) {
 }
 
 // ---- Info ----
-#define INFO_N 32
+#define INFO_N 33
 static void rowInfo(int i, char* l, char* v) {
   struct tm t;
   bool ok = localNow(t);
@@ -2556,6 +2568,7 @@ static void rowInfo(int i, char* l, char* v) {
       sprintf(v, "%uд %02u:%02u", (unsigned)(s / 86400), (unsigned)(s / 3600 % 24), (unsigned)(s / 60 % 60));
       break;
     }
+    case 31: strcpy(l, "Остання подія"); snprintf(v, 28, "%s", lastEvt); break;   // тут видно адресу ІЧ-пульта
     default: strcpy(l, "Прошивка"); strcpy(v, __DATE__); break;
   }
 }
@@ -3691,6 +3704,19 @@ static void initOta() {
 
 // Власна передача кадру: U8g2 ріже кадр на десятки дрібних I2C-транзакцій (~20 мс на кадр).
 // Тут — по одній транзакції на смугу (128 байт), і лише смуги/стовпці, що змінились з минулого кадру.
+// Самовідновлення: кілька коротких команд орієнтації/режиму (лише ті, від яких SH1106 не блимає).
+// Якщо збій на шині зіпсував команду і екран перевернувся чи інвертувався — за 2 с усе повертається.
+static void oledRefreshCfg() {
+  static const uint8_t CFG[] = {0x00, 0xA1, 0xC8, 0xD3, 0x00, 0x40, 0xA4, 0xA6};
+  Wire.setClock(OLED_I2C_HZ);
+  Wire.beginTransmission(0x3C);
+  Wire.write(CFG, sizeof(CFG));
+  Wire.write(0x81);
+  Wire.write(oledContrast);
+  Wire.write(0xAF);
+  if (Wire.endTransmission() != 0) oledCacheOk = false;   // збій — наступний кадр повністю
+}
+
 static void oledFlush() {
   uint8_t* b = oled.getBufferPtr();
   Wire.setClock(OLED_I2C_HZ);
@@ -3883,6 +3909,10 @@ void loop() {
   uint32_t now = millis();
 
   if (!otaBusy) oledWatch(now);
+  {
+    static uint32_t tCfg = 0;
+    if (oledOk && !otaBusy && !deepOff && now - tCfg >= OLED_CFG_REFRESH_MS) { tCfg = now; oledRefreshCfg(); }
+  }
 
 #if DEBUG_MODE
   static uint32_t tPing = 0;                  // перевірка зв'язку в обидва боки
