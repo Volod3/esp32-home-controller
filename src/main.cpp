@@ -154,7 +154,6 @@
 #define DEFAULT_SLEEP_SEC      15
 #define TRANS_MS               340      // тривалість анімації переходу між екранами
 #define OLED_I2C_HZ            800000   // шина під час передачі кадру. Якщо екран "сміттить" — 400000 (тоді переходи повільніші)
-#define OLED_CFG_REFRESH_MS    2000     // раз на 2 с повторно задати орієнтацію екрана (самовідновлення, якщо збій шини його "перевернув")
 #define FRAME_MS               25       // період кадрів: 25 мс = 40 к/с (16 = ~60 к/с)
 #define DEBUG_LINK             DEBUG_MODE
 
@@ -3704,18 +3703,6 @@ static void initOta() {
 
 // Власна передача кадру: U8g2 ріже кадр на десятки дрібних I2C-транзакцій (~20 мс на кадр).
 // Тут — по одній транзакції на смугу (128 байт), і лише смуги/стовпці, що змінились з минулого кадру.
-// Самовідновлення: кілька коротких команд орієнтації/режиму (лише ті, від яких SH1106 не блимає).
-// Якщо збій на шині зіпсував команду і екран перевернувся чи інвертувався — за 2 с усе повертається.
-static void oledRefreshCfg() {
-  // Лише орієнтація/зсув/режим. 0xAF ("увімкнути") і контраст НЕ шлемо: 0xAF перезапускає
-  // вбудований перетворювач SH1106, і яскравість щоразу плавно "дихала".
-  static const uint8_t CFG[] = {0x00, 0xA1, 0xC8, 0xD3, 0x00, 0x40, 0xA4, 0xA6};
-  Wire.setClock(OLED_I2C_HZ);
-  Wire.beginTransmission(0x3C);
-  Wire.write(CFG, sizeof(CFG));
-  if (Wire.endTransmission() != 0) oledCacheOk = false;   // збій — наступний кадр повністю
-}
-
 static void oledFlush() {
   uint8_t* b = oled.getBufferPtr();
   Wire.setClock(OLED_I2C_HZ);
@@ -3908,10 +3895,6 @@ void loop() {
   uint32_t now = millis();
 
   if (!otaBusy) oledWatch(now);
-  {
-    static uint32_t tCfg = 0;
-    if (oledOk && !otaBusy && !deepOff && now - tCfg >= OLED_CFG_REFRESH_MS) { tCfg = now; oledRefreshCfg(); }
-  }
 
 #if DEBUG_MODE
   static uint32_t tPing = 0;                  // перевірка зв'язку в обидва боки
@@ -3956,12 +3939,13 @@ void loop() {
   static uint32_t tDraw = 0;
   if (oledOk && !otaBusy && !deepOff) {
     // рівні ~60 к/с завжди (шина екрана на OLED_I2C_HZ, кадр передається ~11 мс)
-    if (dirty || now - tDraw >= FRAME_MS) {
-      static uint32_t lastFrame = 0;
+    // жорстка межа 40 к/с: між кадрами щонайменше FRAME_MS (і після натискання теж — воно
+    // з'явиться на найближчому кадрі). Ритм від запланованого часу, щоб у середньому було рівно 40.
+    static uint32_t lastFrame = 0;
+    if (now - lastFrame >= FRAME_MS && (dirty || now - tDraw >= FRAME_MS)) {
       frameDt = constrain((now - lastFrame) / 1000.0f, 0.001f, 0.1f);
       lastFrame = now;
-      // фіксований ритм 60 к/с: наступний кадр від запланованого часу, а не від кінця цього
-      tDraw = (dirty || now - tDraw >= 3 * FRAME_MS) ? now : tDraw + FRAME_MS;
+      tDraw = (now - tDraw >= 2 * FRAME_MS) ? now : tDraw + FRAME_MS;
       dirty = false;
       stepAnim();
       animMoving = false;
