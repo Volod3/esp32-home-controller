@@ -22,7 +22,11 @@ LIB = os.path.join(HERE, "build", "libemu.so")
 SRC = [os.path.join(HERE, "..", "src", "main.cpp"), os.path.join(HERE, "..", "src", "web_page.h"),
        os.path.join(HERE, "emu.cpp"), os.path.join(HERE, "shim", "emu_hal.h")]
 
-ZOOM = 6
+ZOOM = 4
+try:
+    from PIL import Image          # згладжене масштабування (без нього — звичайне збільшення)
+except ImportError:
+    Image = None
 BG, PANEL, FG, MUTED, ACC = "#0b0f17", "#131a26", "#e8eef8", "#8a97ad", "#5b9cff"
 
 
@@ -55,7 +59,7 @@ class Emulator:
 
         root.title("Емулятор контролера ESP32")
         root.configure(bg=BG)
-        root.minsize(1100, 560)
+        root.minsize(900, 420)
         style = ttk.Style()
         style.theme_use("clam")
         style.configure(".", background=PANEL, foreground=FG, fieldbackground=PANEL)
@@ -79,10 +83,6 @@ class Emulator:
         self.small = tk.PhotoImage(width=128, height=64)
         self.big = tk.PhotoImage(width=W, height=H)
         self.cv.create_image(0, 0, image=self.big, anchor="nw")
-        for x in range(0, W, ZOOM):                       # тонка сітка — вигляд справжніх пікселів
-            self.cv.create_line(x, 0, x, H, fill="#000")
-        for y in range(0, H, ZOOM):
-            self.cv.create_line(0, y, W, y, fill="#000")
         tk.Label(left, text="Коліщатко — крутилка · ЛКМ — OK (утримати 2 с — розбудити з глиб. сну) · ПКМ — BACK · середня — CONF\n"
                             "Клавіші: ← → ↑ ↓ — крутилка, Enter — OK, Esc — BACK, пробіл — CONF",
                  bg=BG, fg=MUTED, font=("Sans", 9), justify="left").pack(anchor="w")
@@ -223,8 +223,13 @@ class Emulator:
             px[0::3] = bits.translate(bytes([6, int(175 * k)] + [0] * 254))
             px[1::3] = bits.translate(bytes([8, int(220 * k)] + [0] * 254))
             px[2::3] = bits.translate(bytes([12, int(255 * k)] + [0] * 254))
-            self.small.configure(data=b"P6 128 64 255\n" + bytes(px), format="PPM")
-            self.big.tk.call(self.big.name, "copy", self.small.name, "-zoom", ZOOM, ZOOM)
+            if Image:                                   # згладжені пікселі
+                W, H = 128 * ZOOM, 64 * ZOOM
+                im = Image.frombytes("RGB", (128, 64), bytes(px)).resize((W, H), Image.BICUBIC)
+                self.big.configure(data=b"P6 %d %d 255\n" % (W, H) + im.tobytes(), format="PPM")
+            else:
+                self.small.configure(data=b"P6 128 64 255\n" + bytes(px), format="PPM")
+                self.big.tk.call(self.big.name, "copy", self.small.name, "-zoom", ZOOM, ZOOM)
         self.root.after(12, self.tick)
 
     def panel(self):

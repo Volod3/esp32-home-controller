@@ -8,21 +8,20 @@
 html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 body{padding:22px;min-height:100vh}
 body:before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(1000px 500px at 85% -10%,#1b2b55 0,transparent 60%),radial-gradient(800px 500px at -10% 10%,#2a1b4d 0,transparent 55%)}
-.wrap{max-width:1240px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px}
+.wrap{max-width:960px;margin:0 auto;display:grid;grid-template-columns:minmax(0,600px) 320px;gap:20px}
 @media(max-width:980px){.wrap{grid-template-columns:1fr}}
 h1{font-size:18px;margin:0 0 4px;display:flex;gap:10px;align-items:center}
 h1 i{width:30px;height:30px;border-radius:10px;background:linear-gradient(135deg,var(--acc),var(--acc2));display:grid;place-items:center;font-style:normal;font-size:16px}
 .sub{color:var(--mut);font-size:12.5px}
 .card{background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--line);border-radius:18px;padding:16px}
-.oled{position:relative;margin-top:14px;background:#02040a;border-radius:16px;padding:18px;border:1px solid #1d2636;box-shadow:inset 0 0 40px #000,0 18px 50px #0008;user-select:none;cursor:pointer}
-.oled canvas{display:block;width:100%;aspect-ratio:2/1;image-rendering:pixelated;image-rendering:crisp-edges}
-.oled .grid{position:absolute;inset:18px;pointer-events:none;background-image:linear-gradient(#000a 1px,transparent 1px),linear-gradient(90deg,#000a 1px,transparent 1px);background-size:calc(100%/128) calc(100%/64)}
+.oled{position:relative;margin-top:14px;max-width:560px;background:#02040a;border-radius:16px;padding:18px;border:1px solid #1d2636;box-shadow:inset 0 0 40px #000,0 18px 50px #0008;user-select:none;cursor:pointer}
+.oled canvas{display:block;width:100%;aspect-ratio:2/1;image-rendering:auto}   /* згладжені пікселі */
 .oled .badge{position:absolute;top:8px;right:14px;font:700 10px system-ui;letter-spacing:1px;color:var(--mut)}
 .oled.flash{box-shadow:inset 0 0 40px #000,0 0 0 2px #5b9cff66,0 18px 50px #0008}
-.hint{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.hint{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;max-width:560px}
 .hint span{background:#ffffff0c;border:1px solid var(--line);border-radius:99px;padding:4px 10px;font-size:12px;color:var(--mut)}
 .hint b{color:var(--tx);font-weight:600}
-.pad{display:grid;grid-template-columns:1fr 1.3fr 1fr .9fr .9fr;gap:8px;margin-top:14px}
+.pad{display:grid;grid-template-columns:1fr 1.3fr 1fr .9fr .9fr;gap:8px;margin-top:14px;max-width:560px}
 .pad button{border:1px solid var(--line);background:#ffffff0c;color:var(--tx);border-radius:14px;padding:13px 6px;font:700 14px system-ui;cursor:pointer;transition:transform .08s,background .15s;user-select:none}
 .pad button:active,.pad button.down{transform:scale(.95);background:#5b9cff33}
 .pad .ok{background:linear-gradient(135deg,var(--acc),var(--acc2));border:0;color:#fff}
@@ -49,7 +48,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radiu
  <div>
   <h1><i>⚡</i>Емулятор контролера</h1>
   <div class="sub">Справжня прошивка (src/main.cpp), зібрана для ПК. Усі екрани, меню, анімації й налаштування — як на платі.</div>
-  <div class="oled" id="oled"><canvas id="cv" width="128" height="64"></canvas><div class="grid"></div><div class="badge" id="fps">—</div></div>
+  <div class="oled" id="oled"><canvas id="cv" width="128" height="64"></canvas><div class="badge" id="fps">—</div></div>
   <div class="hint"><span><b>Коліщатко</b> — крутилка</span><span><b>Ліва</b> — OK (утримати 2 с — з глибокого сну)</span><span><b>Права</b> — BACK</span><span><b>Середня</b> — CONF</span><span><b>← →</b>, <b>Enter</b>, <b>Esc</b>, <b>Пробіл</b></span></div>
   <div class="pad">
    <button data-step="left">⟲ Ліво</button><button class="ok" data-key="ok">OK</button><button data-step="right">Право ⟳</button>
