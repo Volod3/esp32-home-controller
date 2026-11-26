@@ -225,7 +225,7 @@ class Emulator:
             px[2::3] = bits.translate(bytes([12, int(255 * k)] + [0] * 254))
             if Image:                                   # згладжені пікселі
                 W, H = 128 * ZOOM, 64 * ZOOM
-                im = Image.frombytes("RGB", (128, 64), bytes(px)).resize((W, H), Image.BICUBIC)
+                im = Image.frombytes("RGB", (128, 64), bytes(px)).resize((W, H), Image.NEAREST)   # чіткі пікселі
                 self.big.configure(data=b"P6 %d %d 255\n" % (W, H) + im.tobytes(), format="PPM")
             else:
                 self.small.configure(data=b"P6 128 64 255\n" + bytes(px), format="PPM")

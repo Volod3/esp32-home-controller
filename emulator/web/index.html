@@ -15,7 +15,7 @@ h1 i{width:30px;height:30px;border-radius:10px;background:linear-gradient(135deg
 .sub{color:var(--mut);font-size:12.5px}
 .card{background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--line);border-radius:18px;padding:16px}
 .oled{position:relative;margin-top:14px;max-width:560px;background:#02040a;border-radius:16px;padding:18px;border:1px solid #1d2636;box-shadow:inset 0 0 40px #000,0 18px 50px #0008;user-select:none;cursor:pointer}
-.oled canvas{display:block;width:100%;aspect-ratio:2/1;image-rendering:auto}   /* згладжені пікселі */
+.oled canvas{display:block;width:100%;aspect-ratio:2/1;image-rendering:pixelated;image-rendering:crisp-edges}   /* чіткі пікселі, без сітки */
 .oled .badge{position:absolute;top:8px;right:14px;font:700 10px system-ui;letter-spacing:1px;color:var(--mut)}
 .oled.flash{box-shadow:inset 0 0 40px #000,0 0 0 2px #5b9cff66,0 18px 50px #0008}
 .hint{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;max-width:560px}
